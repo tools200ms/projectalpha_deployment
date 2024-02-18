@@ -1,0 +1,8 @@
+
+*~
+pkg/*
+iso/*
+
+# Development IDEs:
+.kdev4/*
+*.kdev4
