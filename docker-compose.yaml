@@ -1,0 +1,15 @@
+
+services:
+  image_creator:
+    build:
+      context: .
+    volumes:
+      - ./files/entry.sh:/entry.sh
+      - ./files/prepare_image.sh:/usr/local/bin/prepare_image.sh
+
+      - ./iso:/iso
+
+    cap_add: ['ALL']
+    devices:
+      - /dev/fuse
+
