@@ -61,4 +61,10 @@ losetup -o ... /dev/loop0 image.iso
 #mkfs.vfat image.iso1
 
 
+# add: 
+/boot/usercfg.txt <<
+dtparam=i2c_arm=on
+dtoverlay=i2c-rtc,param=pcf8563
+EOF
+
 exit 0
