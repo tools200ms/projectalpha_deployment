@@ -30,12 +30,14 @@ dmesg | grep -i rtc
 # setup udev (mdev not sufficient): 
 setup-devd udev
 
-apk add networkmanager wpa_supplicant networkmanager-wifi networkmanager-cli networkmanager-tui
+apk add dnsmasq networkmanager wpa_supplicant networkmanager-wifi networkmanager-cli networkmanager-tui
 
 rc-update del networking boot
 rc-update add networkmanager
 
 adduser master plugdev
+
+# update NetworkManager.conf
 
 mkdir -p /etc/NetworkManager/conf.d
 cat /etc/NetworkManager/conf.d/any-user.conf <<
@@ -43,11 +45,45 @@ cat /etc/NetworkManager/conf.d/any-user.conf <<
 auth-polkit=false
 EOF
 
-# update NetworkManager.conf
 
-rc-service networkmanager start
+echo "nameserver 1.1.1.1" > /etc/resolv-cf.conf
+echo "resolv-file=/etc/resolv-cf.conf" > /etc/NetworkManager/dnsmasq-shared.d/cloudflare.conf
+
+
 rc-service wpa_supplicant start
+rc-service networkmanager start
+
 
 # setup firewall
 apk add nftables jq python3
+
+
+# setup networking
+
+# rfkill don't run on startup,
+# while nmcli does not seem to
+# have option to switch off
+# bluetooth
+# checkout bluetooth rf killing
+# methods
+rfkill block bluetooth
+
+
+# check on/off status
+nmcli radio
+# scann WI-FI networks
+nmcli dev wifi
+
+nmcli dev wifi connect abracadabra password
+
+# if dhcp ip range is the same at two interfaces,
+# remove doubled default gateway
+route del -net 0.0.0.0 gw 10.0.0.1 netmask 0.0.0.0 dev eth0
+route del -net 10.0.0.0 gw 0.0.0.0 netmask 255.255.0.0 dev eth0
+
+# add shared connection
+nmcli connection add con-name shared type ethernet ifname eth0 ipv4.method shared ipv6.method ignore
+# set cloudflare DNS
+# nmcli con mod abracadabra ipv4.dns "1.1.1.1"
+
 
