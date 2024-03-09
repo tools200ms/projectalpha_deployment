@@ -9,6 +9,7 @@ apk add bash nano ncurses-terminfo
 
 # conf. RTC
 https://raspberrypi.stackexchange.com/questions/90315/how-can-i-get-dev-i2c-devices-to-appear-on-alpine-linux
+https://wiki.alpinelinux.org/wiki/Saving_time_with_Hardware_Clock
 
 apk add i2c-tools
 echo 'i2c-dev' > /etc/modules-load.d/0_i2c.conf
