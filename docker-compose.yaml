@@ -9,6 +9,7 @@ services:
 
       - ./iso:/iso
 
+    privileged: true
     cap_add: ['ALL']
     devices:
       - /dev/fuse
