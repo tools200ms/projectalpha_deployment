@@ -33,6 +33,23 @@ setup-devd udev
 
 apk add dnsmasq networkmanager wpa_supplicant networkmanager-wifi networkmanager-cli networkmanager-tui
 
+## Netbooting: 
+```
+sudo wget -O /var/tftpboot/undionly.kpxe https://boot.netboot.xyz/ipxe/netboot.xyz-undionly.kpxe
+sudo wget -O /var/tftpboot/ipxe.efi https://boot.netboot.xyz/ipxe/netboot.xyz.efi
+
+apk add tftp-hpa
+
+in.tftpd start
+
+enable: /etc/dnsmasq.conf
+conf-dir=/etc/dnsmasq.d
+
+chown dnsmasq:dnsmasq ipxe.efi undionly.kpxe
+
+```
+
+
 rc-update del networking boot
 rc-update add networkmanager
 
