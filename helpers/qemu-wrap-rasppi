@@ -1,0 +1,91 @@
+#!/bin/sh
+
+[ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
+        set -xe || set -e
+
+function first_arg() {
+  echo $1
+}
+
+ONE_MIB=$(( 1024 * 1024 ))
+ONE_GIB=$(( 1024 * $ONE_MIB ))
+
+BOOT_FS_OFFSET=$(( 8192 * 512 ))
+
+
+BOOT_MNT_DIR="/mnt/left"
+
+CACHE_DIR="/var/tmp"
+
+function prepare_cache_file() {
+  IMAGE_NAME=$1
+
+  CACHE_FILE=$CACHE_DIR/$IMAGE_NAME
+
+  CUR_SIZE=$(first_arg $(du -sb $CACHE_FILE))
+
+  POW=$(( 256*1024*1024 ))
+
+  while [ $POW -lt $CUR_SIZE ]; do
+    POW=$(($POW*2))
+    echo $POW
+  done
+
+  REM_SIZE_TOPOW=$(( $POW - $CUR_SIZE ))
+
+  # if zero file is of a proper size already
+
+  if [ $REM_SIZE_TOPOW -ne 0 ]; then
+    echo "Appending file with extra 'zeros' to reach size that is a power of 256 MiB (requirment for SD cards)"
+    echo "Appending by: $REM_SIZE_TOPOW bytes"
+    echo "Final size: $(($REM_SIZE_TOPOW + $CUR_SIZE)) bytes"
+
+    # make file size to be multiple of MB:
+    TAIL=$(( ($REM_SIZE_TOPOW % $ONE_MIB) ))
+
+    # init is in bytes
+    if [ $TAIL -ne 0 ]; then
+      dd bs=1 seek=$CUR_SIZE if=/dev/zero of=$CACHE_FILE count=$TAIL
+    fi
+
+    # change units to MiB
+    CUR_SIZE=$(( ($CUR_SIZE + $TAIL) / $ONE_MIB ))
+    TAIL=$(( $REM_SIZE_TOPOW / $ONE_MIB ))
+
+    if [ $TAIL -ne 0 ]; then
+      dd bs=$ONE_MIB seek=$CUR_SIZE if=/dev/zero of=$CACHE_FILE count=$TAIL
+    fi
+  fi
+
+  echo $CACHE_FILE
+}
+
+IMG_FILE=$1
+
+if [ ! -f "$IMG_FILE" ]; then
+  echo "Provide image file path"
+  exit 1
+fi
+
+
+
+# Get avaliable loop device, normally '/dev/loop0'
+LOBOOT_DEV=$(sudo losetup -f)
+# Create device for mounting partition that will be used as 'boot'
+sudo losetup --offset $(( $BOOT_FS_OFFSET )) $LOBOOT_DEV $IMG_FILE
+
+
+qemu-system-aarch64 \
+  -M raspi3b \
+  -cpu cortex-a53 \
+  -m 1024 \
+  -kernel $BOOT_MNT_DIR/kernel8.img \
+  -initrd $BOOT_MNT_DIR/initramfs8 \
+  -append "root=/dev/mmcblk0 rw" \
+  -device sd-card,drive=mydrive \
+  -drive id=mydrive,if=none,format=raw,file=$CACHE_DIR/raspios-bookworm-arm64-lite.img \
+  -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
+  -name "Raspberry Pi emulator"
+
+
+

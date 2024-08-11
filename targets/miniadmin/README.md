@@ -1,5 +1,15 @@
 # projectalpha_deployment
 
+## USB Ethernet Gadget
+
+```bash
+# /boot/firmware/config.txt
+
+dtoverlay=dwc2
+
+enable_uart=1
+```
+
 # setup basic system: 
 ## update /etc/apk/repositories
 apk update
@@ -89,10 +99,19 @@ rfkill block bluetooth
 
 # check on/off status
 nmcli radio
+
 # scann WI-FI networks
+```
+# scann for networks:
 nmcli dev wifi
 
-nmcli dev wifi connect abracadabra password
+# connect: 
+nmcli dev wifi connect <wifi name> password <pass>
+```
+
+# WireGuard connection
+
+
 
 # if dhcp ip range is the same at two interfaces,
 # remove doubled default gateway

@@ -3,8 +3,11 @@
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         set -xe || set -e
 
+ALP_VER=3.19
+ALP_VER_SUB=1
+ALP_VER_FULL=${ALP_VER}.${ALP_VER_SUB}
 
-TAR_FILE=alpine-rpi-3.19.1-aarch64.tar.gz
+TAR_FILE=alpine-rpi-${ALP_VER_FULL}-aarch64.tar.gz
 ISO_ROOT=/iso
 #ISO_ROOT=/root/iso
 
@@ -77,11 +80,15 @@ EOF
 
 mkdir -p /mnt/dist/boot /mnt/dist/root
 
+# Get avaliable loop device, normally '/dev/loop0'
 LOBOOT_DEV=$(losetup -f)
-losetup -o 4194304 $LOBOOT_DEV image.iso
+# Create device for mounting partition that will be used as 'boot'
+losetup --offset $((8192*512)) $LOBOOT_DEV image.iso
 
+# Get next avaliable loop device, normally '/dev/loop1'
 LOROOT_DEV=$(losetup -f)
-losetup -o $(($SYS_BEGIN_SECTOR * 512)) $LOROOT_DEV image.iso
+# Create device for mounting partition that will be used as 'root'
+losetup --offset $(($SYS_BEGIN_SECTOR * 512)) $LOROOT_DEV image.iso
 
 # mount
 #dd if=/dev/zero of=$ISO_ROOT/image.iso1 bs=512 count=194560
