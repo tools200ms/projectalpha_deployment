@@ -111,7 +111,37 @@ nmcli dev wifi connect <wifi name> password <pass>
 
 # WireGuard connection
 
+apt-get install curl jq openresolv wireguard
 
+https://raw.githubusercontent.com/mullvad/mullvad-wg.sh/main/mullvad-wg.sh
+
+
+nmcli connection import type wireguard file /path/to/wg0.conf
+nmcli connection up wg0
+
+nmcli con add type ethernet ifname usb0 con-name router ipv4.method shared
+nmcli connection modify router ipv6.method ignore
+nmcli connection up router
+
+https://mullvad.net/en/help/wireguard-and-mullvad-vpn
+
+```ini
+
+[Interface]
+PrivateKey = 
+ListenPort = 51820
+
+# Pick peers from: 
+# https://mullvad.net/en/servers
+
+[Peer]
+# pl-waw-wg-103 
+PublicKey = 07eUtSNhiJ9dQXBmUqFODj0OqhmbKQGbRikIq9f90jM=
+Endpoint = 45.134.212.92:51820
+AllowedIPs = 0.0.0.0/0
+
+
+```
 
 # if dhcp ip range is the same at two interfaces,
 # remove doubled default gateway
