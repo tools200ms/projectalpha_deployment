@@ -41,7 +41,10 @@ dmesg | grep -i rtc
 # setup udev (mdev not sufficient): 
 setup-devd udev
 
-apk add dnsmasq networkmanager wpa_supplicant networkmanager-wifi networkmanager-cli networkmanager-tui
+apk add dnsmasq networkmanager wpa_supplicant networkmanager-wifi networkmanager-cli 
+
+# text based network manager: nmtui
+networkmanager-tui
 
 ## Netbooting: 
 ```
