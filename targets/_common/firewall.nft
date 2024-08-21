@@ -1,0 +1,82 @@
+#!/sbin/nft -f
+
+# "sysctl net.ipv4.ip_forward" must ge set to "1",
+# in not configure "/etc/sysctl.conf" or
+# drop/update aproperiate file in "/etc/sysctl.d/"
+# Desired line that enables IPv4 forwarding is:
+#     net.ipv4.ip_forward = 1
+# (as you might guess)
+
+# place correct interfaces
+define INT_NET = 192.168.17.0/24
+define INT_NIC = usb0
+
+flush ruleset
+
+table inet router {
+
+    set allow_int_tcp_ports {
+        type inet_service;
+        flags interval, constant;
+        elements = { ssh, domain, http, https, http-alt }
+    }
+
+    set allow_int_udp_ports {
+        type inet_service;
+        flags interval, constant;
+        elements = { domain }
+    }
+
+    set allow_traffic_interfaces {
+        type ifname;
+        elements = { pl-waw-wg-102 }
+    }
+
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        iifname lo accept comment "Accept any localhost traffic"
+
+        ct state invalid drop comment "Drop invalid connections"
+        ct state { established, related } accept comment "Accept traffic originated from us"
+
+        iifname $INT_NIC tcp dport @allow_int_tcp_ports \
+                         ip  saddr $INT_NET counter ct state new accept \
+            comment "Accept internall TCP connection"
+
+        iifname $INT_NIC udp dport @allow_int_udp_ports \
+                         ip  saddr $INT_NET counter ct state new accept \
+            comment "Accept internall UDP connection"
+
+        iifname $INT_NIC ip protocol icmp icmp \
+                type { echo-reply, destination-unreachable, echo-request, time-exceeded, parameter-problem } accept \
+                comment "Accept ICMP"
+
+        # allow on DHCP discovery (ignorring saddr as no client IP yet):
+        iifname $INT_NIC udp dport bootps ct state new counter accept
+    }
+
+    chain output {
+        type filter hook output priority 0; policy drop;
+
+        udp sport 68 udp dport 67 counter accept
+
+        oifname @allow_traffic_interfaces counter accept
+        oifname lo counter accept
+        oifname $INT_NIC counter accept
+        oifname wlan0 counter accept
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        iifname $INT_NIC oifname != $INT_NIC masquerade
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+
+        ct state invalid counter drop
+        ip daddr $INT_NET oifname $INT_NIC ct state { established, related } counter accept
+        ip saddr $INT_NET iifname $INT_NIC oifname @allow_traffic_interfaces counter accept
+    }
+}

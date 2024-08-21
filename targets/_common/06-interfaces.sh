@@ -46,7 +46,7 @@ fi
 # We don't use NM in "spot" mode as we want to have control over firewall
 # while NM does alter firewall to handle 'spot' working (forwarding rules)
 
-/etc/dnsmasq.d/dhcp.conf
+/etc/dnsmasq.d/31.conf
 # NetworkManager
 
 exit 0
