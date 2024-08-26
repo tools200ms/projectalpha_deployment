@@ -22,6 +22,9 @@ if [ $INT_MANAGED_BY_NM -ne 0 ]; then
   nmcli con modify int_con ipv6.method ignore
 
   nmcli con up int_con
+
+  # disable 'networking'
+  rc-update del networking boot
 else
   nmcli device set $INT_IF managed no
   # We don't want NM to be in conflict with networking,
@@ -37,9 +40,20 @@ allow-hotplug usb0
 iface usb0 inet static
   address $INT_ADDR
 EOF
+
+  # use both 'networking' and 'networkmanager'
+  rc-update add networkmanager
+
   # enable 'networking' service
   # start (to bring interface up)
 fi
+
+
+# ext. int. eth1
+nmcli con add type ethernet con-name ext_con ifname eth1 ipv4.method auto
+
+nmcli con modify ext_con ipv6.method ignore
+nmcli con up ext_con
 
 
 # Setup dnsmasq

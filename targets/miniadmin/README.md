@@ -36,6 +36,12 @@ dmesg | grep -i rtc
 [  200.297621] rtc-pcf8563 1-0051: hctosys: unable to read the hardware clock
 [  203.581514] rtc-pcf8563 1-0051: low voltage detected, date/time is not reliable.
 
+
+# usb_modeswitch
+
+apk add usb-modeswitch
+
+apk add linux-firmware-rtl_nic
 # setuo NetworkManager
 
 # setup udev (mdev not sufficient): 
@@ -63,8 +69,6 @@ chown dnsmasq:dnsmasq ipxe.efi undionly.kpxe
 ```
 
 
-rc-update del networking boot
-rc-update add networkmanager
 
 adduser master plugdev
 
@@ -98,7 +102,7 @@ apk add nftables jq python3
 # checkout bluetooth rf killing
 # methods
 rfkill block bluetooth
-
+rfkill block all
 
 # check on/off status
 nmcli radio
@@ -115,6 +119,8 @@ nmcli dev wifi connect <wifi name> password <pass>
 # WireGuard connection
 
 apt-get install curl jq openresolv wireguard
+# 'iptables' is linking to NFT
+apk add iptables wireguard-tools-wg-quick wireguard-tools-openrc
 
 https://raw.githubusercontent.com/mullvad/mullvad-wg.sh/main/mullvad-wg.sh
 
@@ -122,9 +128,6 @@ https://raw.githubusercontent.com/mullvad/mullvad-wg.sh/main/mullvad-wg.sh
 nmcli connection import type wireguard file /path/to/wg0.conf
 nmcli connection up wg0
 
-nmcli con add type ethernet ifname usb0 con-name router ipv4.method shared
-nmcli connection modify router ipv6.method ignore
-nmcli connection up router
 
 https://mullvad.net/en/help/wireguard-and-mullvad-vpn
 

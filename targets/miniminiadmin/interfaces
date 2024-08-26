@@ -1,0 +1,27 @@
+auto  lo
+iface lo inet loopback
+
+# Externel eth. dev.
+auto  eth1
+iface eth1 inet dhcp
+
+# Internal eth. dev.
+auto  eth0
+iface eth0 inet static
+    address 10.0.241.90/16
+
+## Continers bridge
+#auto  lxcbr0
+#iface lxcbr0 inet static
+#    bridge_ports   none
+#    bridge_fd      0
+#    bridge_maxwait 0
+#    address        10.3.0.1/16
+
+#auto  lxcbr1
+#iface lxcbr1 inet static
+#    bridge_ports   none
+#    bridge_fd      0
+#    bridge_maxwait 0
+#    address        10.5.0.1/16
+
