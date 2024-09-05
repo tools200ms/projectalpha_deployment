@@ -3,17 +3,28 @@
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         set -xe || set -e
 
-ALP_VER=3.19
+[ -n "$PRETEND" ] && [[ $(echo "$PRETEND" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
+        RUN="echo" || RUN=
+
+
+ALP_VER=3.20
 ALP_VER_SUB=1
 ALP_VER_FULL=${ALP_VER}.${ALP_VER_SUB}
 
-TAR_FILE=alpine-rpi-${ALP_VER_FULL}-aarch64.tar.gz
+# 32bit ARM:
+#ALP_ARCH=armhf
+# 64bit ARM:
+ALP_ARCH=aarch64
+
+ALP_VARIANT=rpi
+
+TAR_FILE=alpine-${ALP_VARIANT}-${ALP_VER_FULL}-${ALP_ARCH}.tar.gz
 ISO_ROOT=/iso
 #ISO_ROOT=/root/iso
 
 
 if [ ! -e $ISO_ROOT/$TAR_FILE ] ; then
-    wget https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/aarch64/$TAR_FILE \
+    wget https://dl-cdn.alpinelinux.org/alpine/v${ALP_VER}/releases/aarch64/${TAR_FILE} \
         -O $ISO_ROOT/$TAR_FILE
 elif [ ! -f $ISO_ROOT/$TAR_FILE ] ; then
     echo "Something wrong with a file: $ISO_ROOT/$TAR_FILE"
@@ -32,6 +43,8 @@ mkdir $ISO_ROOT/build
 
 # unpack
 tar -xzvf $ISO_ROOT/$TAR_FILE -C $ISO_ROOT/build
+
+# add specific overlay:
 
 
 # calculate image size
@@ -78,17 +91,42 @@ $SYS_BEGIN_SECTOR
 w
 EOF
 
+echo_first_arg() {
+  echo $1
+}
+
+create_loopdev() {
+  loop_dev=$1
+
+  if [ -e $loop_dev ]; then
+    # Loop Device exists
+    return
+  fi
+
+  # create loop device
+  loop_minor="${loop_dev##*loop}"
+
+  mknod $loop_dev b 7 $loop_minor
+  # ensure permissions are correct:
+  chown root:disk $loop_dev
+  chmod 660 $loop_dev
+
+  return
+}
+
 mkdir -p /mnt/dist/boot /mnt/dist/root
 
 # Get avaliable loop device, normally '/dev/loop0'
-LOBOOT_DEV=$(losetup -f)
+LOBOOT_DEV=$(echo_first_arg $(losetup -f))
+create_loopdev $LOBOOT_DEV
 # Create device for mounting partition that will be used as 'boot'
-losetup --offset $((8192*512)) $LOBOOT_DEV image.iso
+losetup --offset $((8192*512)) $LOBOOT_DEV $ISO_ROOT/image.iso
 
 # Get next avaliable loop device, normally '/dev/loop1'
-LOROOT_DEV=$(losetup -f)
+LOROOT_DEV=$(echo_first_arg $(losetup -f))
+create_loopdev $LOROOT_DEV
 # Create device for mounting partition that will be used as 'root'
-losetup --offset $(($SYS_BEGIN_SECTOR * 512)) $LOROOT_DEV image.iso
+losetup --offset $(($SYS_BEGIN_SECTOR * 512)) $LOROOT_DEV $ISO_ROOT/image.iso
 
 # mount
 #dd if=/dev/zero of=$ISO_ROOT/image.iso1 bs=512 count=194560
@@ -99,6 +137,11 @@ mount $LOBOOT_DEV /mnt/dist/boot
 mount $LOROOT_DEV /mnt/dist/root
 
 cp -a $ISO_ROOT/build/* /mnt/dist/boot/
+
+umount /mnt/dist/boot
+umount /mnt/dist/root
+losetup -d $LOBOOT_DEV
+losetup -d $LOROOT_DEV
 
 # RTC setup
 # add: 
