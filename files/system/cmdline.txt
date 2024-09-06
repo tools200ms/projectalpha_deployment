@@ -1,0 +1,1 @@
+root=UUID=$ROOT_BLK_UUID modules=sd-mod,usb-storage,ext4 rootfstype=ext4

@@ -6,6 +6,8 @@
 [ -n "$PRETEND" ] && [[ $(echo "$PRETEND" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         RUN="echo" || RUN=
 
+# : ${MIRRORS_URL:=https://mirrors.alpinelinux.org/mirrors.txt}
+ALP_MIRROR="http://eu.edge.kernel.org/alpine"
 
 ALP_VER=3.20
 ALP_VER_SUB=1
@@ -21,6 +23,10 @@ ALP_VARIANT=rpi
 TAR_FILE=alpine-${ALP_VARIANT}-${ALP_VER_FULL}-${ALP_ARCH}.tar.gz
 ISO_ROOT=/iso
 #ISO_ROOT=/root/iso
+
+echo_first_arg() {
+  echo $1
+}
 
 
 if [ ! -e $ISO_ROOT/$TAR_FILE ] ; then
@@ -48,19 +54,19 @@ tar -xzvf $ISO_ROOT/$TAR_FILE -C $ISO_ROOT/build
 
 
 # calculate image size
-DU_M=$(du -sm $ISO_ROOT/build/ | sed -E 's/^([0-9]{1,5})\s{1,8}.*$/\1/g')
-DU_BOOT_M=$(du -sm $ISO_ROOT/build/boot | sed -E 's/^([0-9]{1,5})\s{1,8}.*$/\1/g')
+DU_M=$(echo_first_arg $(du -sm --apparent-size $ISO_ROOT/build))
+DU_BOOT_M=$(echo_first_arg $(du -sm --apparent-size $ISO_ROOT/build/boot))
 
-SYS_SIZE_EXTR_MARGIN=512
-BOOT_SIZE_MULTIPL=4
+SYS_SIZE_MARGIN_M=450
+BOOT_SIZE_X=2
 
 # add size margin
-MB_SYS_SIZE=$(($DU_M - $DU_BOOT_M + $SYS_SIZE_EXTR_MARGIN))
-MB_BOOT_SIZE=$(( (($DU_BOOT_M * $BOOT_SIZE_MULTIPL) / 8) * 8 ))
+MB_SYS_SIZE=$(($DU_M - $DU_BOOT_M + $SYS_SIZE_MARGIN_M))
+MB_BOOT_SIZE=$(( (($DU_BOOT_M * $BOOT_SIZE_X) / 8) * 8 ))
 MB_SIZE=$(($MB_SYS_SIZE + $MB_BOOT_SIZE))
 
 # validate if 'MB_SIZE' holds OK data
-if [ $MB_SIZE -gt 200 ] && [ $MB_SIZE -lt 20 ] ; then
+if [ $MB_SIZE -gt 400 ] && [ $MB_SIZE -lt 20 ] ; then
     echo "Too large size ..."
     exit 1
 fi
@@ -72,14 +78,14 @@ echo "BOOT SIZE: $MB_BOOT_SIZE"
 dd if=/dev/zero of=$ISO_ROOT/image.iso bs=1048576 count=$MB_SIZE
 
 # 128 * 8192 is one MB
-SYS_BEGIN_SECTOR=$((($MB_BOOT_SIZE * 2048)))
+SYS_BEGIN_SECTOR=$(($MB_BOOT_SIZE * 2048))
 
 fdisk $ISO_ROOT/image.iso <<EOF
 o
 n
 p
 1
-8192
+2048
 $(($SYS_BEGIN_SECTOR - 1))
 t
 c
@@ -88,12 +94,11 @@ p
 2
 $SYS_BEGIN_SECTOR
 
+a
+1
+
 w
 EOF
-
-echo_first_arg() {
-  echo $1
-}
 
 create_loopdev() {
   loop_dev=$1
@@ -116,11 +121,15 @@ create_loopdev() {
 
 mkdir -p /mnt/dist/boot /mnt/dist/root
 
+#curl -LOs \
+#  ${ALP_MIRROR}/v${ALP_VER}/main/${ALP_ARCH}/apk-tools-static-2.14.4-r0.apk
+#tar -xzf apk-tools-static-*.apk
+
 # Get avaliable loop device, normally '/dev/loop0'
 LOBOOT_DEV=$(echo_first_arg $(losetup -f))
 create_loopdev $LOBOOT_DEV
 # Create device for mounting partition that will be used as 'boot'
-losetup --offset $((8192*512)) $LOBOOT_DEV $ISO_ROOT/image.iso
+losetup --offset $((2048*512)) $LOBOOT_DEV $ISO_ROOT/image.iso
 
 # Get next avaliable loop device, normally '/dev/loop1'
 LOROOT_DEV=$(echo_first_arg $(losetup -f))
@@ -128,20 +137,35 @@ create_loopdev $LOROOT_DEV
 # Create device for mounting partition that will be used as 'root'
 losetup --offset $(($SYS_BEGIN_SECTOR * 512)) $LOROOT_DEV $ISO_ROOT/image.iso
 
-# mount
-#dd if=/dev/zero of=$ISO_ROOT/image.iso1 bs=512 count=194560
-mkfs.vfat -n BOOT $LOBOOT_DEV
-mkfs.f2fs -l SYS  $LOROOT_DEV
+
+mkfs.vfat -n BOOT -F 32 $LOBOOT_DEV
+mkfs.ext4 -L SYS  $LOROOT_DEV
+
 
 mount $LOBOOT_DEV /mnt/dist/boot
 mount $LOROOT_DEV /mnt/dist/root
 
-cp -a $ISO_ROOT/build/* /mnt/dist/boot/
+# install files:
+cp -r $ISO_ROOT/boot/* /mnt/dist/boot/
+#rsync -a --exclude 'apks' --exclude '.alpine-release' \
+#      $ISO_ROOT/build/ /mnt/dist/boot/
+#rsync -a \
+#      $ISO_ROOT/build/boot /mnt/dist/boot/
 
-umount /mnt/dist/boot
-umount /mnt/dist/root
-losetup -d $LOBOOT_DEV
-losetup -d $LOROOT_DEV
+ROOT_BLK_UUID=$(blkid -s UUID -o value $LOROOT_DEV)
+
+eval "echo $(cat /system/cmdline.txt)" > /mnt/dist/boot/cmdline.txt
+
+#for pkg in $(find $ISO_ROOT/build/apks | grep -e '\.apk$'); do tar -xzf "$pkg" -C /mnt/dist/root/; done
+tar -xvf /iso/org.alp.tar -C /mnt/dist/root/
+
+clan_mounts() {
+  # Umount
+  umount /mnt/dist/boot
+  umount /mnt/dist/root
+  losetup -d $LOBOOT_DEV
+  losetup -d $LOROOT_DEV
+}
 
 # RTC setup
 # add: 

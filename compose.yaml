@@ -1,4 +1,8 @@
 
+networks:
+  nat-net:
+    external: false
+
 services:
   image_creator:
     build:
@@ -8,6 +12,10 @@ services:
       - ./files/prepare_image.sh:/usr/local/bin/prepare_image.sh
 
       - ./iso:/iso
+      - ./files/system:/system
+
+    networks:
+      - nat-net
 
     privileged: true
     cap_add: ['ALL']
