@@ -121,6 +121,8 @@ create_loopdev() {
 
 mkdir -p /mnt/dist/boot /mnt/dist/root
 
+partprobe
+
 #curl -LOs \
 #  ${ALP_MIRROR}/v${ALP_VER}/main/${ALP_ARCH}/apk-tools-static-2.14.4-r0.apk
 #tar -xzf apk-tools-static-*.apk
