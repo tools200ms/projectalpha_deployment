@@ -15,10 +15,17 @@ BOOT_FS_OFFSET=$(( 8192 * 512 ))
 
 BOOT_MNT_DIR="/mnt/left"
 
-CACHE_DIR="/var/tmp"
+CACHE_DIR="/var/cache/pilinux"
+mkdir -p $CACHE_DIR
 
-function prepare_cache_file() {
-  IMAGE_NAME=$1
+# sd-card size must be of power 2, e.g.:
+# 512MiB, 1GiB, 2GiB, 4GiB ...
+# Append extra 'zeros' to an end of an
+# image file to ensure that its size is
+# exactly 2^<power> bites.
+function prepare_mmc_imgfile() {
+  IMAGE_NAME=$(basename $1)
+
 
   CACHE_FILE=$CACHE_DIR/$IMAGE_NAME
 
@@ -31,7 +38,7 @@ function prepare_cache_file() {
     echo $POW
   done
 
-  REM_SIZE_TOPOW=$(( $POW - $CUR_SIZE ))
+  REM_SIZE_TOPOW=$(($POW - $CUR_SIZE))
 
   # if zero file is of a proper size already
 
@@ -50,7 +57,7 @@ function prepare_cache_file() {
 
     # change units to MiB
     CUR_SIZE=$(( ($CUR_SIZE + $TAIL) / $ONE_MIB ))
-    TAIL=$(( $REM_SIZE_TOPOW / $ONE_MIB ))
+    TAIL=$(($REM_SIZE_TOPOW / $ONE_MIB))
 
     if [ $TAIL -ne 0 ]; then
       dd bs=$ONE_MIB seek=$CUR_SIZE if=/dev/zero of=$CACHE_FILE count=$TAIL
@@ -60,7 +67,17 @@ function prepare_cache_file() {
   echo $CACHE_FILE
 }
 
+function get_working_file
+
 IMG_FILE=$1
+KERNEL=$2
+INITRAMFS=$3
+
+if [ $(id -u) -ne 0 ]; then
+  echo "Run it as root"
+  echo "    sorry for disturbing safe realm"
+  exit 0
+fi
 
 if [ ! -f "$IMG_FILE" ]; then
   echo "Provide image file path"
@@ -68,12 +85,13 @@ if [ ! -f "$IMG_FILE" ]; then
 fi
 
 
-
 # Get avaliable loop device, normally '/dev/loop0'
 LOBOOT_DEV=$(sudo losetup -f)
 # Create device for mounting partition that will be used as 'boot'
-sudo losetup --offset $(( $BOOT_FS_OFFSET )) $LOBOOT_DEV $IMG_FILE
+losetup $LOBOOT_DEV $IMG_FILE
+partprobe -s $LOBOOT_DEV
 
+mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR
 
 qemu-system-aarch64 \
   -M raspi3b \
@@ -81,11 +99,13 @@ qemu-system-aarch64 \
   -m 1024 \
   -kernel $BOOT_MNT_DIR/kernel8.img \
   -initrd $BOOT_MNT_DIR/initramfs8 \
-  -append "root=/dev/mmcblk0 rw" \
+  -append "root=/dev/mmcblk0p2 rw" \
   -device sd-card,drive=mydrive \
   -drive id=mydrive,if=none,format=raw,file=$CACHE_DIR/raspios-bookworm-arm64-lite.img \
+  -usb \
+  -device usb-kbd,bus=usb-bus.0 \
   -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
   -name "Raspberry Pi emulator"
 
-
-
+umount $BOOT_MNT_DIR
+losetup -d $LOBOOT_DEV
