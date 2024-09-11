@@ -1,5 +1,13 @@
 #!/bin/sh
 
+# Arguments:
+# ./qemu-wrap-rasppi raspios-bookworm-arm64-lite.img kernel8.img initramfs8
+# ./qemu-wrap-rasppi alpine-rpi-3.20.2-aarch64.img boot/vmlinuz-rpi boot/initramfs-rpi
+
+
+[ -n "$PRETEND" ] && [[ $(echo "$PRETEND" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
+        RUN="echo" || RUN=
+
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         set -xe || set -e
 
@@ -24,10 +32,12 @@ mkdir -p $CACHE_DIR
 # image file to ensure that its size is
 # exactly 2^<power> bites.
 function prepare_mmc_imgfile() {
-  IMAGE_NAME=$(basename $1)
+  IMAGE_PATH="$1"
+  CACHE_FILE=$CACHE_DIR/$(basename $IMAGE_PATH)
 
-
-  CACHE_FILE=$CACHE_DIR/$IMAGE_NAME
+  if [ ! -f "$CACHE_FILE" ] ; then
+    cp "$IMAGE_PATH" $CACHE_FILE
+  fi
 
   CUR_SIZE=$(first_arg $(du -sb $CACHE_FILE))
 
@@ -35,7 +45,7 @@ function prepare_mmc_imgfile() {
 
   while [ $POW -lt $CUR_SIZE ]; do
     POW=$(($POW*2))
-    echo $POW
+    #echo $POW
   done
 
   REM_SIZE_TOPOW=$(($POW - $CUR_SIZE))
@@ -43,9 +53,9 @@ function prepare_mmc_imgfile() {
   # if zero file is of a proper size already
 
   if [ $REM_SIZE_TOPOW -ne 0 ]; then
-    echo "Appending file with extra 'zeros' to reach size that is a power of 256 MiB (requirment for SD cards)"
-    echo "Appending by: $REM_SIZE_TOPOW bytes"
-    echo "Final size: $(($REM_SIZE_TOPOW + $CUR_SIZE)) bytes"
+    #echo "Appending file with extra 'zeros' to reach size that is a power of 256 MiB (requirment for SD cards)"
+    #echo "Appending by: $REM_SIZE_TOPOW bytes"
+    #echo "Final size: $(($REM_SIZE_TOPOW + $CUR_SIZE)) bytes"
 
     # make file size to be multiple of MB:
     TAIL=$(( ($REM_SIZE_TOPOW % $ONE_MIB) ))
@@ -67,9 +77,9 @@ function prepare_mmc_imgfile() {
   echo $CACHE_FILE
 }
 
-function get_working_file
+#function get_working_file
 
-IMG_FILE=$1
+IMG_FILE="$1"
 KERNEL=$2
 INITRAMFS=$3
 
@@ -84,24 +94,57 @@ if [ ! -f "$IMG_FILE" ]; then
   exit 1
 fi
 
+if [ -z "$KERNEL" ] || [ -z "$INITRAMFS" ]; then
+  echo "Provide kernel and initramfs file names"
+  exit 1
+fi
+
+WORK_IMG=$(prepare_mmc_imgfile "$IMG_FILE")
+KERNEL_PARAMS="console=tty0,115200"
 
 # Get avaliable loop device, normally '/dev/loop0'
 LOBOOT_DEV=$(sudo losetup -f)
 # Create device for mounting partition that will be used as 'boot'
-losetup $LOBOOT_DEV $IMG_FILE
+losetup $LOBOOT_DEV $WORK_IMG
 partprobe -s $LOBOOT_DEV
 
-mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR
+# mount first partition, or if no partition table mount filesystem directly
+if [ -e ${LOBOOT_DEV}p1 ]; then
+  mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR
+  KERNEL_PARAMS="$KERNEL_PARAMS root=/dev/mmcblk0p2 rw"
+else
+  mount ${LOBOOT_DEV} $BOOT_MNT_DIR
+    KERNEL_PARAMS="$KERNEL_PARAMS modules=loop,squashfs,sd-mod,usb-storage"
+fi
 
-qemu-system-aarch64 \
+if [ ! -f "$BOOT_MNT_DIR/$KERNEL" ]; then
+  echo "Wrong kernel image name, or no file referred to"
+  exit 2
+fi
+
+if [ ! -f "$BOOT_MNT_DIR/$INITRAMFS" ]; then
+  echo "Wrong kernel image name, or no file referred to"
+  exit 2
+fi
+
+if [ ! -f "$BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb" ]; then
+  echo "No DTB file"
+  exit 3
+fi
+
+
+$RUN qemu-system-aarch64 \
   -M raspi3b \
   -cpu cortex-a53 \
   -m 1024 \
-  -kernel $BOOT_MNT_DIR/kernel8.img \
-  -initrd $BOOT_MNT_DIR/initramfs8 \
-  -append "root=/dev/mmcblk0p2 rw" \
+  -serial pty \
+  -kernel $BOOT_MNT_DIR/$KERNEL \
+  -initrd $BOOT_MNT_DIR/$INITRAMFS \
+  -append "$KERNEL_PARAMS" \
   -device sd-card,drive=mydrive \
-  -drive id=mydrive,if=none,format=raw,file=$CACHE_DIR/raspios-bookworm-arm64-lite.img \
+  -drive id=mydrive,if=none,format=raw,file=$WORK_IMG \
+  -chardev udp,id=udp0serial,host=127.0.0.1,port=4100 \
+  -device serial,chardev=udp0serial \
   -usb \
   -device usb-kbd,bus=usb-bus.0 \
   -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
