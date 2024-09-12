@@ -100,7 +100,8 @@ if [ -z "$KERNEL" ] || [ -z "$INITRAMFS" ]; then
 fi
 
 WORK_IMG=$(prepare_mmc_imgfile "$IMG_FILE")
-KERNEL_PARAMS="console=tty0,115200"
+KERNEL_PARAMS=""
+# console=ttyAMA0
 
 # Get avaliable loop device, normally '/dev/loop0'
 LOBOOT_DEV=$(sudo losetup -f)
@@ -132,6 +133,7 @@ if [ ! -f "$BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb" ]; then
   exit 3
 fi
 
+#   -chardev socket,id=com0,path=/tmp/builder1.sock,server=on,wait=off \
 
 $RUN qemu-system-aarch64 \
   -M raspi3b \
@@ -143,8 +145,7 @@ $RUN qemu-system-aarch64 \
   -append "$KERNEL_PARAMS" \
   -device sd-card,drive=mydrive \
   -drive id=mydrive,if=none,format=raw,file=$WORK_IMG \
-  -chardev udp,id=udp0serial,host=127.0.0.1,port=4100 \
-  -device serial,chardev=udp0serial \
+  -serial mon:stdio \
   -usb \
   -device usb-kbd,bus=usb-bus.0 \
   -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
