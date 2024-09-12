@@ -100,8 +100,8 @@ if [ -z "$KERNEL" ] || [ -z "$INITRAMFS" ]; then
 fi
 
 WORK_IMG=$(prepare_mmc_imgfile "$IMG_FILE")
-KERNEL_PARAMS=""
-# console=ttyAMA0
+KERNEL_PARAMS="console=tty1 console=ttyAMA1"
+# console=ttyAMA1
 
 # Get avaliable loop device, normally '/dev/loop0'
 LOBOOT_DEV=$(sudo losetup -f)
@@ -134,7 +134,13 @@ if [ ! -f "$BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb" ]; then
 fi
 
 #   -chardev socket,id=com0,path=/tmp/builder1.sock,server=on,wait=off \
+# mount /dev/loop1p2 /mnt/dir
+# cd /mnt/dir
+# rm ./systemd/system/multi-user.target.wants/userconfig.service
+#
 
+# looks like system does not create /dev/ttyAMA0 device,
+# as a result only boot messages are print, can't login
 $RUN qemu-system-aarch64 \
   -M raspi3b \
   -cpu cortex-a53 \
@@ -145,7 +151,6 @@ $RUN qemu-system-aarch64 \
   -append "$KERNEL_PARAMS" \
   -device sd-card,drive=mydrive \
   -drive id=mydrive,if=none,format=raw,file=$WORK_IMG \
-  -serial mon:stdio \
   -usb \
   -device usb-kbd,bus=usb-bus.0 \
   -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
