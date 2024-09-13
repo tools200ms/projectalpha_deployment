@@ -100,22 +100,36 @@ if [ -z "$KERNEL" ] || [ -z "$INITRAMFS" ]; then
 fi
 
 WORK_IMG=$(prepare_mmc_imgfile "$IMG_FILE")
-KERNEL_PARAMS="console=tty1 console=ttyAMA1"
+KERNEL_PARAMS="console=tty1 console=ttyAMA1 root=/dev/mmcblk0p2 rw"
 # console=ttyAMA1
 
-# Get avaliable loop device, normally '/dev/loop0'
-LOBOOT_DEV=$(sudo losetup -f)
-# Create device for mounting partition that will be used as 'boot'
-losetup $LOBOOT_DEV $WORK_IMG
-partprobe -s $LOBOOT_DEV
+MOUNT_BOOT=0
 
-# mount first partition, or if no partition table mount filesystem directly
-if [ -e ${LOBOOT_DEV}p1 ]; then
-  mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR
+PART_CNT=$(fdisk -l $WORK_IMG | grep $(basename $WORK_IMG) | wc -l)
+
+if [ $PART_CNT -eq 3 ]; then
   KERNEL_PARAMS="$KERNEL_PARAMS root=/dev/mmcblk0p2 rw"
+elif [ $PART_CNT -eq 2 ]; then
+  KERNEL_PARAMS="$KERNEL_PARAMS modules=loop,squashfs,sd-mod,usb-storage"
 else
-  mount ${LOBOOT_DEV} $BOOT_MNT_DIR
-    KERNEL_PARAMS="$KERNEL_PARAMS modules=loop,squashfs,sd-mod,usb-storage"
+  echo "Partion table not found"
+  exit 1
+fi
+
+
+if [ $MOUNT_BOOT -eq 1 ]; then
+  # Get avaliable loop device, normally '/dev/loop0'
+  LOBOOT_DEV=$(sudo losetup -f)
+  # Create device for mounting partition that will be used as 'boot'
+  losetup $LOBOOT_DEV $WORK_IMG
+  partprobe -s $LOBOOT_DEV
+
+  # mount first partition, or if no partition table mount filesystem directly
+  if [ -e ${LOBOOT_DEV}p1 ]; then
+    mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR
+  else
+    mount ${LOBOOT_DEV} $BOOT_MNT_DIR
+  fi
 fi
 
 if [ ! -f "$BOOT_MNT_DIR/$KERNEL" ]; then
@@ -153,7 +167,10 @@ $RUN qemu-system-aarch64 \
   -drive id=mydrive,if=none,format=raw,file=$WORK_IMG \
   -usb \
   -device usb-kbd,bus=usb-bus.0 \
+  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+  -device usb-net,netdev=net0 \
   -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
+  -rtc base=localtime \
   -name "Raspberry Pi emulator"
 
 umount $BOOT_MNT_DIR
