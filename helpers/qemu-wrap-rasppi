@@ -155,6 +155,8 @@ fi
 
 # looks like system does not create /dev/ttyAMA0 device,
 # as a result only boot messages are print, can't login
+# All (Ethernet and mass storage) USB devices running at USB 1.1 speed
+# slow, but works well and no rush
 $RUN qemu-system-aarch64 \
   -M raspi3b \
   -cpu cortex-a53 \
@@ -163,12 +165,14 @@ $RUN qemu-system-aarch64 \
   -kernel $BOOT_MNT_DIR/$KERNEL \
   -initrd $BOOT_MNT_DIR/$INITRAMFS \
   -append "$KERNEL_PARAMS" \
-  -device sd-card,drive=mydrive \
-  -drive id=mydrive,if=none,format=raw,file=$WORK_IMG \
+  -drive id=sysdrive,if=none,format=raw,file=$WORK_IMG \
+  -device sd-card,drive=sysdrive \
   -usb \
   -device usb-kbd,bus=usb-bus.0 \
   -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-  -device usb-net,netdev=net0 \
+  -device usb-net,bus=usb-bus.0,netdev=net0 \
+  -drive id=imgout0,if=none,format=raw,file=../flavors/pi--linux.iso \
+  -device usb-storage,bus=usb-bus.0,drive=imgout0 \
   -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
   -rtc base=localtime \
   -name "Raspberry Pi emulator"
