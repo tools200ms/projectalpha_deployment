@@ -1,12 +1,11 @@
 #!/bin/bash
+# Based on: https://wiki.alpinelinux.org/wiki/Alpine_Linux_in_a_chroot
 
 [ -n "$PRETEND" ] && [[ $(echo "$PRETEND" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         RUN="echo" || RUN=
 
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         set -xe || set -e
-
-# Based on: https://wiki.alpinelinux.org/wiki/Alpine_Linux_in_a_chroot
 
 mirror="http://alpine.sakamoto.pl/alpine"
 
@@ -52,36 +51,47 @@ function deploy() {
 function bind_with_host() {
   ch_root="$1"
 
-  mount -o bind /dev ${ch_root}/dev
-  mount -t proc none ${ch_root}/proc
-  mount -o bind /sys ${ch_root}/sys
+  if [ -n $RUN ]; then
+    echo "No thing to do."
+    return
+  fi
+
+  mnt_path=$(realpath ${ch_root}/dev)
+  if [ $(mount | grep "$mnt_path") -eq 0 ]; then
+    $RUN mount -o bind /dev ${mnt_path}
+  fi
+
+  mnt_path=$(realpath ${ch_root}/proc)
+  if [ $(mount | grep "$mnt_path") -eq 0 ]; then
+    $RUN mount -t proc none ${mnt_path}
+  fi
+
+  mnt_path=$(realpath ${ch_root}/sys)
+  if [ $(mount | grep "$mnt_path") -eq 0 ]; then
+    $RUN mount -o bind /sys ${mnt_path}
+  fi
 }
 
+# delpoy chrooted environment, and bind special file systems:
 for b_dir in ${build_dir}; do
   arch=$(echo $b_dir | cut -d'.' -f2)
-  deploy $b_dir $arch
+
+  # if exists assume chrooted environment is stetup
+  if [ ! -f ${$b_dir}/etc/alpine-release ]
+    mkdir -p $b_dir
+    deploy $b_dir $arch
+  fi
+
+  bind_with_host $b_dir
 done
 
-exit 0
+# perform image preparation:
+for b_dir in ${build_dir}; do
+  arch=$(echo $b_dir | cut -d'.' -f2)
+    # chroot, install and configure necessary stuf
+  $RUN chroot ${chroot_dir} /install.sh
 
-
-
-# chroot
-chroot ${chroot_dir} /bin/ash -l
-rc-update add devfs sysinit
-rc-update add dmesg sysinit
-rc-update add mdev sysinit
-
-rc-update add hwclock boot
-rc-update add modules boot
-rc-update add sysctl boot
-rc-update add hostname boot
-rc-update add bootmisc boot
-rc-update add syslog boot
-
-rc-update add mount-ro shutdown
-rc-update add killprocs shutdown
-rc-update add savecache shutdown
-
+  # unbind
+done
 
 exit 0
