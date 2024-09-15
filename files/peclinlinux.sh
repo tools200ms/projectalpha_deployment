@@ -1,15 +1,11 @@
 #!/bin/sh
 
-DEVICE=/dev/sdb
+DEVICE=/dev/sda
 CHROOT=/mnt/dist
 
 #blkdiscard $DEVICE
 #dd if=/dev/zero of=$DEVICE bs=4k
 
-setup-disk $DEVICE EOF<<
-sys
-y
-EOF
 
 mkdir -p $CHROOT
 mount ${DEVICE}2 $CHROOT

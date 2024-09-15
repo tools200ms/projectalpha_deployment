@@ -169,7 +169,7 @@ $RUN qemu-system-aarch64 \
   -device sd-card,drive=sysdrive \
   -usb \
   -device usb-kbd,bus=usb-bus.0 \
-  -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+  -netdev user,id=net0,hostfwd=tcp::15022-:22 \
   -device usb-net,bus=usb-bus.0,netdev=net0 \
   -drive id=imgout0,if=none,format=raw,file=../flavors/pi--linux.iso \
   -device usb-storage,bus=usb-bus.0,drive=imgout0 \
