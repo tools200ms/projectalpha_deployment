@@ -15,16 +15,54 @@ function first_arg() {
   echo $1
 }
 
+function second_arg() {
+  echo $2
+}
+
+function last_args() {
+  if [ -n "$1" ]; then
+    shift
+  fi
+
+  echo "$@"
+}
+
 ONE_MIB=$(( 1024 * 1024 ))
 ONE_GIB=$(( 1024 * $ONE_MIB ))
 
 BOOT_FS_OFFSET=$(( 8192 * 512 ))
 
+DTB_LIB="/var/lib/alpbase/dtb"
+BOOT_MNT_DIR="/mnt/img.boot"
 
-BOOT_MNT_DIR="/mnt/left"
+#CACHE_DIR="/var/cache/pilinux"
+CACHE_DIR="/var/cache/alpbase"
+TEMP_DIR="/var/tmp"
 
-CACHE_DIR="/var/cache/pilinux"
-mkdir -p $CACHE_DIR
+DEFAULT_DEVICE_MODEL="raspi3b"
+
+function print_help() {
+    cat <<EOF
+Launch VM:
+$(basename $0) --device|-d [raspi3b] <img file> --imgboot|-i y|n <kernel> <initramfs> --new|-n <name>
+
+  --device|-d - model of the emulated device (default: '$DEFAULT_DEVICE_MODEL')
+  <img file>  - path to image file to be mounted as mmc
+  --imgboot|-i y|n - if 'y' find <kernel> and <initramfs> in a boot
+                      partition of the image file.
+                      if 'n' <kernel> and <initramfs> point to an external
+                      files
+  --new|-n - if used create new container from image, it's name will be returned
+
+Launch VM based on created container:
+$(basename $0) <container name or id>
+
+List containers:
+$(basename $0) ls --full|-f
+  ls - list
+
+EOF
+}
 
 # sd-card size must be of power 2, e.g.:
 # 512MiB, 1GiB, 2GiB, 4GiB ...
@@ -33,13 +71,13 @@ mkdir -p $CACHE_DIR
 # exactly 2^<power> bites.
 function prepare_mmc_imgfile() {
   IMAGE_PATH="$1"
-  CACHE_FILE=$CACHE_DIR/$(basename $IMAGE_PATH)
+  CACHE_FILE="$2"
 
   if [ ! -f "$CACHE_FILE" ] ; then
-    cp "$IMAGE_PATH" $CACHE_FILE
+    $RUN cp "$IMAGE_PATH" $CACHE_FILE
   fi
 
-  CUR_SIZE=$(first_arg $(du -sb $CACHE_FILE))
+  CUR_SIZE=$(first_arg $(du -sb $IMAGE_PATH))
 
   POW=$(( 256*1024*1024 ))
 
@@ -62,7 +100,7 @@ function prepare_mmc_imgfile() {
 
     # init is in bytes
     if [ $TAIL -ne 0 ]; then
-      dd bs=1 seek=$CUR_SIZE if=/dev/zero of=$CACHE_FILE count=$TAIL
+      $RUN dd bs=1 seek=$CUR_SIZE if=/dev/zero of=$CACHE_FILE count=$TAIL
     fi
 
     # change units to MiB
@@ -70,24 +108,341 @@ function prepare_mmc_imgfile() {
     TAIL=$(($REM_SIZE_TOPOW / $ONE_MIB))
 
     if [ $TAIL -ne 0 ]; then
-      dd bs=$ONE_MIB seek=$CUR_SIZE if=/dev/zero of=$CACHE_FILE count=$TAIL
+      $RUN dd bs=$ONE_MIB seek=$CUR_SIZE if=/dev/zero of=$CACHE_FILE count=$TAIL
     fi
   fi
-
-  echo $CACHE_FILE
 }
 
-#function get_working_file
 
-IMG_FILE="$1"
-KERNEL=$2
-INITRAMFS=$3
+function mount_boot() {
+  WORK_IMG=$1
 
-if [ $(id -u) -ne 0 ]; then
+  # Get available loop device, normally '/dev/loop0'
+  if [ -z "$RUN" ]; then
+    LOBOOT_DEV=$(losetup -f)
+  else
+    LOBOOT_DEV="/dev/loop0dummy"
+  fi
+  # Create device for mounting partition that will be used as 'boot'
+  $RUN losetup $LOBOOT_DEV $WORK_IMG
+  $RUN partprobe -s $LOBOOT_DEV
+
+  # mount first partition, or if no partition table mount filesystem directly
+  if [ -e ${LOBOOT_DEV}p1 ]; then
+    $RUN mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR -o ro
+  else
+    $RUN mount ${LOBOOT_DEV} $BOOT_MNT_DIR -o ro
+  fi
+}
+
+function umount_boot() {
+  $RUN umount $BOOT_MNT_DIR
+  $RUN losetup -D
+}
+
+# Image, Container, list
+_MODE=
+
+_IMG_BOOT=0
+
+_DEV_MODEL=$DEFAULT_DEVICE_MODEL
+_MACHINE=$_DEV_MODEL
+
+_IMG_FILE=
+_KERNEL=vmlinuz
+_INITRAMFS=initramfs
+
+_NEW_CONTAINER=0
+_CONTAINER_NAME=
+
+_LIST_WITH_DETAILS=0
+
+function set_flag_imgboot() {
+  _IMG_BOOT=$1
+}
+
+function set_create_container() {
+  _NEW_CONTAINER=1
+
+  if [ -z "$_CONTAINER_NAME" ]; then
+    _CONTAINER_NAME="$(shuf -n 1 ./verbs.txt)-$(shuf -n 1 ./nouns.txt)"
+  fi
+}
+
+
+function parse_yes_no() {
+  if [ -z "$1" ]; then
+    echo "Empty argument (fix code?)"
+    exit -1
+  fi
+
+  if [[ $(echo "$1" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] ; then
+    return 1
+  elif [[ $(echo "$1" | tr '[:upper:]' '[:lower:]') =~ ^n|no|0|off$ ]] ; then
+    return 0
+  else
+    echo "Correct option is one of: yes, y, on, 1 or no, n, 0, off"
+    exit 3
+  fi
+}
+
+function parse_devmodel_name() {
+  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-]){1,128}$ ]]; then
+    echo "Illegal machine (device) name"
+    exit 3
+  fi
+
+  MACHINE=$(qemu-system-aarch64 -machine help | grep "^$1[[:space:]].*")
+
+  if [ -z "$MACHINE" ]; then
+    echo "Machine (device) has not been found: $1"
+    exit 3
+  fi
+
+  _MACHINE=$(first_arg $MACHINE)
+  echo "Loading: $_MACHINE"
+}
+
+function parse_imgfile_path() {
+  if [ ! -f "$1" ]; then
+    echo "Provide path to an existing file"
+    exit 3
+  fi
+
+  _IMG_FILE=$(realpath "$1")
+}
+
+function parse_kernel_name() {
+  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-|\_|\.]){1,128}$ ]]; then
+    echo "Illegal name"
+    exit 3
+  fi
+
+  _KERNEL=$1
+}
+
+function parse_initramfs_name() {
+  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-|\_|\.]){1,128}$ ]]; then
+    echo "Illegal name"
+    exit 3
+  fi
+
+  _INITRAMFS=$1
+}
+
+function parse_container_name() {
+  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-]){1,128}$ ]]; then
+    echo "Illegal name"
+    exit 3
+  fi
+
+  _CONTAINER_NAME=$1
+}
+
+
+_parse_now=
+setter_fn=
+param_chain=
+
+# Return value:
+#     1 - argument has been read
+#     0 - argument can't be interpreted by current setter and parser,
+#         continue parsing
+function parse() {
+  local opt=$1
+
+  if [ -n "$_parse_now" ]; then
+    if [[ "${_parse_now:0:1}" == '?' ]]; then
+      opt_param=1
+      _parse_now="${_parse_now:1}"
+    else
+      opt_param=0
+    fi
+
+    if [[ "${opt:0:1}" == "-" ]]; then
+      if [ $opt_param -eq 0 ]; then
+        echo "Illegal parameter (starting with '-')"
+        exit 1
+      else
+        _parse_now=
+        setter_fn=
+        param_chain=
+        #eval "parse_$_parse_now"
+        return 0
+      fi
+    fi
+
+    if [ -n "$opt" ]; then
+      eval "parse_$_parse_now $opt"
+      res_code=$?
+    else
+      res_code=0
+    fi
+
+    if [ -n "$setter_fn" ]; then
+      eval "set_$setter_fn" $res_code $parse_now
+      setter_fn=
+    fi
+
+    _parse_now=$(first_arg $param_chain)
+    param_chain=$(last_args $param_chain)
+
+    return 1
+  fi
+
+  return 0
+}
+
+for opt in "$@"; do
+  if ! parse $opt; then
+    # take next argument
+    continue
+  fi
+
+  case $opt in
+    --device|-d)
+      _parse_now="devmodel_name"
+    ;;
+    --imgboot|-i)
+      _parse_now="yes_no"
+      setter_fn="flag_imgboot"
+      param_chain="?kernel_name ?initramfs_name"
+    ;;
+    --new|-n)
+      _parse_now="?container_name"
+      setter_fn="create_container"
+    ;;
+    --help|-h)
+      print_help
+      exit 0
+    ;;
+    ls)
+      _MODE="list"
+    ;;
+    --full|-f)
+      _LIST_WITH_DETAILS=1
+    ;;
+    *)
+      # probe:
+      if [ -f "$opt" ]; then
+        parse_imgfile_path $opt
+      else
+        parse_container_name $opt
+      fi
+    ;;
+  esac
+done
+
+# parse remaining arguments if exists
+parse || true
+
+if [ -z "$RUN" ] && [ $(id -u) -ne 0 ]; then
   echo "Run it as root"
   echo "    sorry for disturbing safe realm"
   exit 0
 fi
+
+# determinate operation mode:
+if [ -n "$_IMG_FILE" ]; then
+  if [ $_IMG_BOOT -eq 1 ]; then
+    _MODE="image.imgboot"
+  else
+    # Direct Boot
+    _MODE="image.dirboot"
+  fi
+elif [ -n "$_CONTAINER_NAME" ]; then
+  _MODE="container"
+  # load settings
+fi
+
+case $_MODE in
+  image.*)
+    echo "run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
+    if [ $_NEW_CONTAINER -eq 1 ]; then
+      echo "Creating continer: $_CONTAINER_NAME"
+      $RUN mkdir -p $CACHE_DIR
+
+      CONT_FILE="$CACHE_DIR/$_CONTAINER_NAME"
+      if [ -f $CONT_FILE ]; then
+        echo "Continer already exists, launch container instead"
+        exit 4
+      fi
+
+      prepare_mmc_imgfile $_IMG_FILE $CONT_FILE
+
+      cat <<EOF > $CACHE_DIR/db/${_CONTAINER_NAME}.txt
+container $_CONTAINER_NAME
+device    $_MACHINE
+kernel    $_KERNEL
+initramfs $_INITRAMFS
+rootimg   $_IMG_FILE
+date      $(date)
+EOF
+    else
+      # running tempolary container
+      TEMP_CACHE_FILE=$(mktemp --tmpdir=$TEMP_DIR --suffix=-container.img)
+
+      prepare_mmc_imgfile $_IMG_FILE $TEMP_CACHE_FILE
+      CONT_FILE=$TEMP_CACHE_FILE
+    fi
+
+    if [ $_MODE == "image.imgboot" ]; then
+      # mount boot partition
+      mount_boot $CONT_FILE
+
+      _KERNEL=$BOOT_MNT_DIR/$_KERNEL
+      _INITRAMFS=$BOOT_MNT_DIR/$_INITRAMFS
+    fi
+
+    if [ $_NEW_CONTAINER -eq 1 ]; then
+      $RUN cp _KERNEL $CACHE_DIR/db/${_CONTAINER_NAME}
+      #
+    fi
+  ;;
+
+  container)
+    echo "run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
+
+    _MACHINE=$(second_arg $(cat $CACHE_DIR/db/${_CONTAINER_NAME}.txt | grep '^device'))
+    _KERNEL=$(second_arg $(cat $CACHE_DIR/db/${_CONTAINER_NAME}.txt | grep '^kernel'))
+    _INITRAMFS=$(second_arg $(cat $CACHE_DIR/db/${_CONTAINER_NAME}.txt | grep '^initramfs'))
+
+    echo $_KERNEL
+    echo $_INITRAMFS
+  ;;
+  list)
+    if [ $_LIST_WITH_DETAILS -eq 1 ]; then
+      ls -lh $CACHE_DIR
+    else
+      ls $CACHE_DIR
+    fi
+
+    exit 0
+  ;;
+  *)
+    # if undefined mode print help:
+    print_help
+    exit 2
+  ;;
+esac
+
+# test and run
+if [ -z $RUN ] && [ ! -f $_KERNEL ] || [ -f $_INITRAMFS ]; then
+  echo "Can't find kernel or initrd files"
+fi
+
+
+
+if [ $_MODE == "image.imgboot" ]; then
+  # umount boot partition
+  umount_boot
+fi
+
+if [ -n "$TEMP_CACHE_FILE" ] && [ -e "$TEMP_CACHE_FILE" ]; then
+  $RUN rm "$TEMP_CACHE_FILE"
+fi
+
+exit 0
 
 if [ ! -f "$IMG_FILE" ]; then
   echo "Provide image file path"
@@ -112,25 +467,10 @@ if [ $PART_CNT -eq 3 ]; then
 elif [ $PART_CNT -eq 2 ]; then
   KERNEL_PARAMS="$KERNEL_PARAMS modules=loop,squashfs,sd-mod,usb-storage"
 else
-  echo "Partion table not found"
+  echo "Partition table not found"
   exit 1
 fi
 
-
-if [ $MOUNT_BOOT -eq 1 ]; then
-  # Get avaliable loop device, normally '/dev/loop0'
-  LOBOOT_DEV=$(sudo losetup -f)
-  # Create device for mounting partition that will be used as 'boot'
-  losetup $LOBOOT_DEV $WORK_IMG
-  partprobe -s $LOBOOT_DEV
-
-  # mount first partition, or if no partition table mount filesystem directly
-  if [ -e ${LOBOOT_DEV}p1 ]; then
-    mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR
-  else
-    mount ${LOBOOT_DEV} $BOOT_MNT_DIR
-  fi
-fi
 
 if [ ! -f "$BOOT_MNT_DIR/$KERNEL" ]; then
   echo "Wrong kernel image name, or no file referred to"
@@ -152,6 +492,9 @@ fi
 # cd /mnt/dir
 # rm ./systemd/system/multi-user.target.wants/userconfig.service
 #
+
+# PCI required:
+#   -virtfs local,path=./share,mount_tag=host0,security_model=passthrough,id=host0 \
 
 # looks like system does not create /dev/ttyAMA0 device,
 # as a result only boot messages are print, can't login
@@ -175,7 +518,9 @@ $RUN qemu-system-aarch64 \
   -device usb-storage,bus=usb-bus.0,drive=imgout0 \
   -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
   -rtc base=localtime \
-  -name "Raspberry Pi emulator"
+  -name "Raspberry Pi 3B model emulator"
 
 umount $BOOT_MNT_DIR
 losetup -d $LOBOOT_DEV
+
+}

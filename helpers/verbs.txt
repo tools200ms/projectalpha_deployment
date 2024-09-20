@@ -1,0 +1,6 @@
+run
+jump
+fly
+walk
+sing
+drive
