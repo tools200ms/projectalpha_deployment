@@ -1,15 +1,12 @@
 #!/bin/sh
 
-# Arguments:
-# ./qemu-wrap-rasppi raspios-bookworm-arm64-lite.img kernel8.img initramfs8
-# ./qemu-wrap-rasppi alpine-rpi-3.20.2-aarch64.img boot/vmlinuz-rpi boot/initramfs-rpi
-
 
 [ -n "$PRETEND" ] && [[ $(echo "$PRETEND" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         RUN="echo" || RUN=
 
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         set -xe || set -e
+
 
 function first_arg() {
   echo $1
@@ -32,12 +29,27 @@ ONE_GIB=$(( 1024 * $ONE_MIB ))
 
 BOOT_FS_OFFSET=$(( 8192 * 512 ))
 
+declare -A devices_dtb
+declare -A devices_cpu
+
+# arm:
+devices_dtb["raspi0"]="alpine-standard/bcm2835-rpi-zero.dtb"
+devices_cpu["raspi0"]="arm1176"
+
+# aarch:
+devices_dtb["raspi3b"]="raspios-bookworm-arm64/bcm2710-rpi-3-b.dtb"
+devices_cpu["raspi3b"]="cortex-a53"
+
+
 DTB_LIB="/var/lib/alpbase/dtb"
 BOOT_MNT_DIR="/mnt/img.boot"
 
 #CACHE_DIR="/var/cache/pilinux"
 CACHE_DIR="/var/cache/alpbase"
+DB_DIR="/var/cache/alpbase/db"
 TEMP_DIR="/var/tmp"
+
+$RUN mkdir -p $CACHE_DIR $DB_DIR $TEMP_DIR
 
 DEFAULT_DEVICE_MODEL="raspi3b"
 
@@ -73,9 +85,11 @@ function prepare_mmc_imgfile() {
   IMAGE_PATH="$1"
   CACHE_FILE="$2"
 
-  if [ ! -f "$CACHE_FILE" ] ; then
+  if [ ! -f "$CACHE_FILE" ] || [ ! -s "$CACHE_FILE" ] ; then
+    # if file does not exists, or is a zero size copy image
     $RUN cp "$IMAGE_PATH" $CACHE_FILE
   fi
+  # else, if file already exists veriry size
 
   CUR_SIZE=$(first_arg $(du -sb $IMAGE_PATH))
 
@@ -119,25 +133,27 @@ function mount_boot() {
 
   # Get available loop device, normally '/dev/loop0'
   if [ -z "$RUN" ]; then
-    LOBOOT_DEV=$(losetup -f)
+    _LOBOOT_DEV=$(losetup -f)
   else
-    LOBOOT_DEV="/dev/loop0dummy"
+    _LOBOOT_DEV="/dev/loop0dummy"
   fi
   # Create device for mounting partition that will be used as 'boot'
-  $RUN losetup $LOBOOT_DEV $WORK_IMG
-  $RUN partprobe -s $LOBOOT_DEV
+  $RUN losetup $_LOBOOT_DEV $WORK_IMG
+  $RUN partprobe -s $_LOBOOT_DEV
 
   # mount first partition, or if no partition table mount filesystem directly
-  if [ -e ${LOBOOT_DEV}p1 ]; then
-    $RUN mount ${LOBOOT_DEV}p1 $BOOT_MNT_DIR -o ro
+  if [ -e ${_LOBOOT_DEV}p1 ]; then
+    $RUN mount ${_LOBOOT_DEV}p1 $BOOT_MNT_DIR -o ro
+    _NO_PART_TABLE_MODE=0
   else
-    $RUN mount ${LOBOOT_DEV} $BOOT_MNT_DIR -o ro
+    $RUN mount ${_LOBOOT_DEV} $BOOT_MNT_DIR -o ro
+    _NO_PART_TABLE_MODE=1
   fi
 }
 
 function umount_boot() {
-  $RUN umount $BOOT_MNT_DIR
-  $RUN losetup -D
+  $RUN umount ${BOOT_MNT_DIR}
+  $RUN losetup -d ${_LOBOOT_DEV}
 }
 
 # Image, Container, list
@@ -150,12 +166,14 @@ _MACHINE=$_DEV_MODEL
 
 _IMG_FILE=
 _KERNEL=vmlinuz
-_INITRAMFS=initramfs
+_INITRAMFS=
 
 _NEW_CONTAINER=0
 _CONTAINER_NAME=
 
 _LIST_WITH_DETAILS=0
+
+_LOBOOT_DEV=
 
 function set_flag_imgboot() {
   _IMG_BOOT=$1
@@ -173,7 +191,7 @@ function set_create_container() {
 function parse_yes_no() {
   if [ -z "$1" ]; then
     echo "Empty argument (fix code?)"
-    exit -1
+    exit 55
   fi
 
   if [[ $(echo "$1" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] ; then
@@ -360,7 +378,7 @@ case $_MODE in
     echo "run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
     if [ $_NEW_CONTAINER -eq 1 ]; then
       echo "Creating continer: $_CONTAINER_NAME"
-      $RUN mkdir -p $CACHE_DIR
+
 
       CONT_FILE="$CACHE_DIR/$_CONTAINER_NAME"
       if [ -f $CONT_FILE ]; then
@@ -370,13 +388,17 @@ case $_MODE in
 
       prepare_mmc_imgfile $_IMG_FILE $CONT_FILE
 
-      cat <<EOF > $CACHE_DIR/db/${_CONTAINER_NAME}.txt
+      mkdir -p $DB_DIR/$_CONTAINER_NAME
+      cat <<EOF > $DB_DIR/${_CONTAINER_NAME}/config.txt
+# file auto-generated
 container $_CONTAINER_NAME
 device    $_MACHINE
 kernel    $_KERNEL
 initramfs $_INITRAMFS
+imgboot   $_IMG_BOOT
+
 rootimg   $_IMG_FILE
-date      $(date)
+cdate     $(date)
 EOF
     else
       # running tempolary container
@@ -386,16 +408,25 @@ EOF
       CONT_FILE=$TEMP_CACHE_FILE
     fi
 
-    if [ $_MODE == "image.imgboot" ]; then
+    if [ $_IMG_BOOT -eq 1 ]; then
       # mount boot partition
       mount_boot $CONT_FILE
 
       _KERNEL=$BOOT_MNT_DIR/$_KERNEL
-      _INITRAMFS=$BOOT_MNT_DIR/$_INITRAMFS
+
+      if [ -n "${_INITRAMFS}" ]; then
+        _INITRAMFS=$BOOT_MNT_DIR/$_INITRAMFS
+      fi
     fi
 
     if [ $_NEW_CONTAINER -eq 1 ]; then
-      $RUN cp _KERNEL $CACHE_DIR/db/${_CONTAINER_NAME}
+      $RUN cp $_KERNEL $DB_DIR/$_CONTAINER_NAME/
+      _KERNEL=$DB_DIR/$_CONTAINER_NAME/$_KERNEL
+
+      if [ -n "$_INITRAMFS" ]; then
+        $RUN cp $_INITRAMFS $DB_DIR/$_CONTAINER_NAME/
+        _INITRAMFS=$DB_DIR/$_CONTAINER_NAME/$_INITRAMFS
+      fi
       #
     fi
   ;;
@@ -403,12 +434,22 @@ EOF
   container)
     echo "run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
 
-    _MACHINE=$(second_arg $(cat $CACHE_DIR/db/${_CONTAINER_NAME}.txt | grep '^device'))
-    _KERNEL=$(second_arg $(cat $CACHE_DIR/db/${_CONTAINER_NAME}.txt | grep '^kernel'))
-    _INITRAMFS=$(second_arg $(cat $CACHE_DIR/db/${_CONTAINER_NAME}.txt | grep '^initramfs'))
+    _MACHINE=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^device'))
+    _IMG_BOOT=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^imgboot'))
+    _KERNEL=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^kernel'))
+    _INITRAMFS=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^initramfs'))
 
-    echo $_KERNEL
-    echo $_INITRAMFS
+    if [ $_IMG_BOOT -eq 0 ]; then
+      $_KERNEL=$DB_DIR/${_CONTAINER_NAME}/$_KERNEL
+
+      if [ -n "$_INITRAMFS" ]; then
+        $_INITRAMFS=$DB_DIR/${_CONTAINER_NAME}/$_INITRAMFS
+      fi
+    else
+      mount_boot $CONT_FILE
+      _KERNEL=$BOOT_MNT_DIR/$_KERNEL
+      _INITRAMFS=$BOOT_MNT_DIR/$_INITRAMFS
+    fi
   ;;
   list)
     if [ $_LIST_WITH_DETAILS -eq 1 ]; then
@@ -431,59 +472,13 @@ if [ -z $RUN ] && [ ! -f $_KERNEL ] || [ -f $_INITRAMFS ]; then
   echo "Can't find kernel or initrd files"
 fi
 
+M_CPU=${devices_cpu[${_MACHINE}]}
+M_DTB=${devices_dtb[${_MACHINE}]}
 
+DTB_FILE=${DTB_LIB}/${M_DTB}
 
-if [ $_MODE == "image.imgboot" ]; then
-  # umount boot partition
-  umount_boot
-fi
-
-if [ -n "$TEMP_CACHE_FILE" ] && [ -e "$TEMP_CACHE_FILE" ]; then
-  $RUN rm "$TEMP_CACHE_FILE"
-fi
-
-exit 0
-
-if [ ! -f "$IMG_FILE" ]; then
-  echo "Provide image file path"
-  exit 1
-fi
-
-if [ -z "$KERNEL" ] || [ -z "$INITRAMFS" ]; then
-  echo "Provide kernel and initramfs file names"
-  exit 1
-fi
-
-WORK_IMG=$(prepare_mmc_imgfile "$IMG_FILE")
-KERNEL_PARAMS="console=tty1 console=ttyAMA1 root=/dev/mmcblk0p2 rw"
-# console=ttyAMA1
-
-MOUNT_BOOT=0
-
-PART_CNT=$(fdisk -l $WORK_IMG | grep $(basename $WORK_IMG) | wc -l)
-
-if [ $PART_CNT -eq 3 ]; then
-  KERNEL_PARAMS="$KERNEL_PARAMS root=/dev/mmcblk0p2 rw"
-elif [ $PART_CNT -eq 2 ]; then
-  KERNEL_PARAMS="$KERNEL_PARAMS modules=loop,squashfs,sd-mod,usb-storage"
-else
-  echo "Partition table not found"
-  exit 1
-fi
-
-
-if [ ! -f "$BOOT_MNT_DIR/$KERNEL" ]; then
-  echo "Wrong kernel image name, or no file referred to"
-  exit 2
-fi
-
-if [ ! -f "$BOOT_MNT_DIR/$INITRAMFS" ]; then
-  echo "Wrong kernel image name, or no file referred to"
-  exit 2
-fi
-
-if [ ! -f "$BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb" ]; then
-  echo "No DTB file"
+if [ ! -f "${DTB_FILE}" ]; then
+  echo "DTB file has not been found: ${DTB_FILE}"
   exit 3
 fi
 
@@ -500,27 +495,45 @@ fi
 # as a result only boot messages are print, can't login
 # All (Ethernet and mass storage) USB devices running at USB 1.1 speed
 # slow, but works well and no rush
-$RUN qemu-system-aarch64 \
-  -M raspi3b \
-  -cpu cortex-a53 \
-  -m 1024 \
-  -serial pty \
-  -kernel $BOOT_MNT_DIR/$KERNEL \
-  -initrd $BOOT_MNT_DIR/$INITRAMFS \
-  -append "$KERNEL_PARAMS" \
-  -drive id=sysdrive,if=none,format=raw,file=$WORK_IMG \
-  -device sd-card,drive=sysdrive \
-  -usb \
-  -device usb-kbd,bus=usb-bus.0 \
-  -netdev user,id=net0,hostfwd=tcp::15022-:22 \
-  -device usb-net,bus=usb-bus.0,netdev=net0 \
-  -drive id=imgout0,if=none,format=raw,file=../flavors/pi--linux.iso \
-  -device usb-storage,bus=usb-bus.0,drive=imgout0 \
-  -dtb $BOOT_MNT_DIR/bcm2710-rpi-3-b.dtb \
-  -rtc base=localtime \
-  -name "Raspberry Pi 3B model emulator"
+function run() {
+  KERNEL_PARAMS="console=tty1 console=ttyAMA1 root=/dev/mmcblk0p2 rw"
+  # console=ttyAMA1
 
-umount $BOOT_MNT_DIR
-losetup -d $LOBOOT_DEV
+  # Set parameters
+  if [ $_NO_PART_TABLE_MODE -eq 0 ]; then
+    KERNEL_PARAMS="$KERNEL_PARAMS root=/dev/mmcblk0p2 rw"
+  else
+    KERNEL_PARAMS="$KERNEL_PARAMS modules=loop,squashfs,sd-mod,usb-storage"
+  fi
 
+  $RUN qemu-system-aarch64 \
+    -M ${_MACHINE} \
+    -cpu ${M_CPU} -m 1024 \
+    -serial pty \
+    -kernel $_KERNEL -initrd $_INITRAMFS \
+    -append "$KERNEL_PARAMS" \
+    -drive id=sysdrive,if=none,format=raw,file=${CONT_FILE} \
+    -device sd-card,drive=sysdrive \
+    -usb \
+    -device usb-kbd,bus=usb-bus.0 \
+    -netdev user,id=net0,hostfwd=tcp::15022-:22 \
+    -device usb-net,bus=usb-bus.0,netdev=net0 \
+    -drive id=imgout0,if=none,format=raw,file=../flavors/pi--linux.iso \
+    -device usb-storage,bus=usb-bus.0,drive=imgout0 \
+    -dtb ${DTB_FILE} \
+    -rtc base=localtime \
+    -name "$_MACHINE emulator"
 }
+
+run
+
+if [ $_IMG_BOOT -eq 1 ]; then
+  # umount boot partition
+  umount_boot
+fi
+
+if [ -n "$TEMP_CACHE_FILE" ] && [ -e "$TEMP_CACHE_FILE" ]; then
+  $RUN rm "$TEMP_CACHE_FILE"
+fi
+
+exit 0
