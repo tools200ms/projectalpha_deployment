@@ -362,20 +362,15 @@ fi
 
 # determinate operation mode:
 if [ -n "$_IMG_FILE" ]; then
-  if [ $_IMG_BOOT -eq 1 ]; then
-    _MODE="image.imgboot"
-  else
-    # Direct Boot
-    _MODE="image.dirboot"
-  fi
+  _MODE="image"
 elif [ -n "$_CONTAINER_NAME" ]; then
   _MODE="container"
   # load settings
 fi
 
 case $_MODE in
-  image.*)
-    echo "run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
+  image)
+    echo "Run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
     if [ $_NEW_CONTAINER -eq 1 ]; then
       echo "Creating continer: $_CONTAINER_NAME"
 
@@ -421,34 +416,47 @@ EOF
 
     if [ $_NEW_CONTAINER -eq 1 ]; then
       $RUN cp $_KERNEL $DB_DIR/$_CONTAINER_NAME/
-      _KERNEL=$DB_DIR/$_CONTAINER_NAME/$_KERNEL
+      _KERNEL=$DB_DIR/$_CONTAINER_NAME/$(basename ${_KERNEL})
 
       if [ -n "$_INITRAMFS" ]; then
         $RUN cp $_INITRAMFS $DB_DIR/$_CONTAINER_NAME/
-        _INITRAMFS=$DB_DIR/$_CONTAINER_NAME/$_INITRAMFS
+        _INITRAMFS=$DB_DIR/$_CONTAINER_NAME/$(basename ${_INITRAMFS})
       fi
-      #
+    fi
+
+    if [ $_IMG_BOOT -eq 1 ]; then
+      # umount boot partition
+      umount_boot
     fi
   ;;
 
   container)
-    echo "run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
+    echo "Run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
 
     _MACHINE=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^device'))
     _IMG_BOOT=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^imgboot'))
     _KERNEL=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^kernel'))
     _INITRAMFS=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^initramfs'))
 
-    if [ $_IMG_BOOT -eq 0 ]; then
-      $_KERNEL=$DB_DIR/${_CONTAINER_NAME}/$_KERNEL
+    _KERNEL=$DB_DIR/${_CONTAINER_NAME}/$_KERNEL
 
-      if [ -n "$_INITRAMFS" ]; then
-        $_INITRAMFS=$DB_DIR/${_CONTAINER_NAME}/$_INITRAMFS
-      fi
-    else
+    if [ -n "$_INITRAMFS" ]; then
+      _INITRAMFS=$DB_DIR/${_CONTAINER_NAME}/$_INITRAMFS
+    fi
+
+    if [ $_IMG_BOOT -eq 1 ]; then
       mount_boot $CONT_FILE
-      _KERNEL=$BOOT_MNT_DIR/$_KERNEL
-      _INITRAMFS=$BOOT_MNT_DIR/$_INITRAMFS
+
+      if ! $(cmp $BOOT_MNT_DIR/$(basename ${_KERNEL}) $_KERNEL); then
+        # update kernel:
+        $RUN cp $BOOT_MNT_DIR/$(basename ${_KERNEL}) ${_KERNEL}
+      fi
+
+      if [ -n "${_INITRAMFS}" ] && ! $(cmp $BOOT_MNT_DIR/$(basename ${_INITRAMFS}) ${_INITRAMFS}); then
+        $RUN cp $BOOT_MNT_DIR/$(basename ${_INITRAMFS}) ${_INITRAMFS}
+      fi
+
+      umount_boot
     fi
   ;;
   list)
@@ -468,8 +476,14 @@ EOF
 esac
 
 # test and run
-if [ -z $RUN ] && [ ! -f $_KERNEL ] || [ -f $_INITRAMFS ]; then
-  echo "Can't find kernel or initrd files"
+if [ -z $RUN ] && [ ! -f $_KERNEL ]; then
+  echo "Can't find kernel"
+  exit 3
+fi
+
+if [ -n "${_INITRAMFS}" ] && [ ! -f "${_INITRAMFS}" ]; then
+  echo "Initramfs file does not exits ar is not available"
+  exit 3
 fi
 
 M_CPU=${devices_cpu[${_MACHINE}]}
@@ -496,22 +510,29 @@ fi
 # All (Ethernet and mass storage) USB devices running at USB 1.1 speed
 # slow, but works well and no rush
 function run() {
-  KERNEL_PARAMS="console=tty1 console=ttyAMA1 root=/dev/mmcblk0p2 rw"
+  KERNEL_LINE="-kernel ${_KERNEL}"
+  KERNEL_PARAMS="console=tty1 console=ttyAMA0 root=/dev/mmcblk0p2 rw"
   # console=ttyAMA1
+
+  # add initrd if its used
+  if [ -n "${_INITRAMFS}" ]; then
+    KERNEL_LINE="${KERNEL_LINE} -initrd ${_INITRAMFS}"
+  fi
 
   # Set parameters
   if [ $_NO_PART_TABLE_MODE -eq 0 ]; then
-    KERNEL_PARAMS="$KERNEL_PARAMS root=/dev/mmcblk0p2 rw"
+    KERNEL_PARAMS="${KERNEL_PARAMS} root=/dev/mmcblk0p2 rw"
   else
-    KERNEL_PARAMS="$KERNEL_PARAMS modules=loop,squashfs,sd-mod,usb-storage"
+    KERNEL_PARAMS="${KERNEL_PARAMS} modules=loop,squashfs,sd-mod,usb-storage"
   fi
+
+  KERNEL_LINE="${KERNEL_LINE} -append ${KERNEL_PARAMS}"
 
   $RUN qemu-system-aarch64 \
     -M ${_MACHINE} \
     -cpu ${M_CPU} -m 1024 \
     -serial pty \
-    -kernel $_KERNEL -initrd $_INITRAMFS \
-    -append "$KERNEL_PARAMS" \
+    ${KERNEL_LINE} \
     -drive id=sysdrive,if=none,format=raw,file=${CONT_FILE} \
     -device sd-card,drive=sysdrive \
     -usb \
@@ -526,11 +547,6 @@ function run() {
 }
 
 run
-
-if [ $_IMG_BOOT -eq 1 ]; then
-  # umount boot partition
-  umount_boot
-fi
 
 if [ -n "$TEMP_CACHE_FILE" ] && [ -e "$TEMP_CACHE_FILE" ]; then
   $RUN rm "$TEMP_CACHE_FILE"
