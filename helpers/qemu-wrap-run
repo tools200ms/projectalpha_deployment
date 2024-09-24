@@ -47,9 +47,10 @@ BOOT_MNT_DIR="/mnt/img.boot"
 #CACHE_DIR="/var/cache/pilinux"
 CACHE_DIR="/var/cache/alpbase"
 DB_DIR="/var/cache/alpbase/db"
+EXTSTORE_DIR="/var/cache/alpbase/ext_storage"
 TEMP_DIR="/var/tmp"
 
-$RUN mkdir -p $CACHE_DIR $DB_DIR $TEMP_DIR
+$RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
 
 DEFAULT_DEVICE_MODEL="raspi3b"
 
@@ -64,7 +65,7 @@ $(basename $0) --device|-d [raspi3b] <img file> --imgboot|-i y|n <kernel> <initr
                       partition of the image file.
                       if 'n' <kernel> and <initramfs> point to an external
                       files
-  --new|-n - if used create new container from image, it's name will be returned
+  --new|-n - persistent, create new container, it's name will be returned
 
 Launch VM based on created container:
 $(basename $0) <container name or id>
@@ -127,6 +128,12 @@ function prepare_mmc_imgfile() {
   fi
 }
 
+function prepare_usbstick() {
+  PATH=$1
+  SIZE_MB=$2
+
+  $RUN /usr/bin/dd bs=$ONE_MIB count=${SIZE_MB} if="/dev/zero" of="${PATH}"
+}
 
 function mount_boot() {
   WORK_IMG=$1
@@ -205,7 +212,7 @@ function parse_yes_no() {
 }
 
 function parse_devmodel_name() {
-  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-]){1,128}$ ]]; then
+  if [[ ! "$1" =~ ^([a-zA-Z0-9-]){1,128}$ ]]; then
     echo "Illegal machine (device) name"
     exit 3
   fi
@@ -231,8 +238,8 @@ function parse_imgfile_path() {
 }
 
 function parse_kernel_name() {
-  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-|\_|\.]){1,128}$ ]]; then
-    echo "Illegal name"
+  if [[ ! "$1" =~ ^([a-zA-Z0-9_/-]){1,128}$ ]]; then
+    echo "Illegal kernel name"
     exit 3
   fi
 
@@ -240,8 +247,8 @@ function parse_kernel_name() {
 }
 
 function parse_initramfs_name() {
-  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-|\_|\.]){1,128}$ ]]; then
-    echo "Illegal name"
+  if [[ ! "$1" =~ ^([a-zA-Z0-9_/-]){1,128}$ ]]; then
+    echo "Illegal initramfs name"
     exit 3
   fi
 
@@ -249,7 +256,7 @@ function parse_initramfs_name() {
 }
 
 function parse_container_name() {
-  if [[ ! "$1" =~ ^([0-9a-zA-Z|\-]){1,128}$ ]]; then
+  if [[ ! "$1" =~ ^([_a-zA-Z0-9-]){1,128}$ ]]; then
     echo "Illegal name"
     exit 3
   fi
@@ -311,6 +318,15 @@ function parse() {
   return 0
 }
 
+function root_required() {
+  if [ -z "$RUN" ] && [ $(id -u) -ne 0 ]; then
+    echo "Run it as root"
+    echo "    sorry for disturbing safe realm"
+    exit 0
+  fi
+}
+
+
 for opt in "$@"; do
   if ! parse $opt; then
     # take next argument
@@ -354,12 +370,6 @@ done
 # parse remaining arguments if exists
 parse || true
 
-if [ -z "$RUN" ] && [ $(id -u) -ne 0 ]; then
-  echo "Run it as root"
-  echo "    sorry for disturbing safe realm"
-  exit 0
-fi
-
 # determinate operation mode:
 if [ -n "$_IMG_FILE" ]; then
   _MODE="image"
@@ -370,12 +380,13 @@ fi
 
 case $_MODE in
   image)
+    root_required
     echo "Run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
     if [ $_NEW_CONTAINER -eq 1 ]; then
       echo "Creating continer: $_CONTAINER_NAME"
 
 
-      CONT_FILE="$CACHE_DIR/$_CONTAINER_NAME"
+      CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
       if [ -f $CONT_FILE ]; then
         echo "Continer already exists, launch container instead"
         exit 4
@@ -398,6 +409,7 @@ EOF
     else
       # running tempolary container
       TEMP_CACHE_FILE=$(mktemp --tmpdir=$TEMP_DIR --suffix=-container.img)
+      _CONTAINER_NAME=$(basename ${TEMP_CACHE_FILE})
 
       prepare_mmc_imgfile $_IMG_FILE $TEMP_CACHE_FILE
       CONT_FILE=$TEMP_CACHE_FILE
@@ -407,7 +419,11 @@ EOF
       # mount boot partition
       mount_boot $CONT_FILE
 
-      _KERNEL=$BOOT_MNT_DIR/$_KERNEL
+      _KERNEL=${BOOT_MNT_DIR}/${_KERNEL}
+
+      if [ -f ${BOOT_MNT_DIR}/cmdline.txt ]; then
+        CMDLINE_FILE_PATH=${BOOT_MNT_DIR}/cmdline.txt
+      fi
 
       if [ -n "${_INITRAMFS}" ]; then
         _INITRAMFS=$BOOT_MNT_DIR/$_INITRAMFS
@@ -416,7 +432,12 @@ EOF
 
     if [ $_NEW_CONTAINER -eq 1 ]; then
       $RUN cp $_KERNEL $DB_DIR/$_CONTAINER_NAME/
-      _KERNEL=$DB_DIR/$_CONTAINER_NAME/$(basename ${_KERNEL})
+      _KERNEL=${DB_DIR}/${_CONTAINER_NAME}/$(basename ${_KERNEL})
+
+      if [ -n "${CMDLINE_FILE_PATH}" ]; then
+        $RUN cp ${CMDLINE_FILE_PATH} ${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt
+        CMDLINE_FILE_PATH=${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt
+      fi
 
       if [ -n "$_INITRAMFS" ]; then
         $RUN cp $_INITRAMFS $DB_DIR/$_CONTAINER_NAME/
@@ -424,13 +445,17 @@ EOF
       fi
     fi
 
-    if [ $_IMG_BOOT -eq 1 ]; then
+    if [ $_NEW_CONTAINER -eq 1 ] && [ $_IMG_BOOT -eq 1 ]; then
       # umount boot partition
       umount_boot
     fi
+
+    # create external storage for container:
+    prepare_usbstick ${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img 512
   ;;
 
   container)
+    root_required
     echo "Run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
 
     _MACHINE=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^device'))
@@ -444,8 +469,10 @@ EOF
       _INITRAMFS=$DB_DIR/${_CONTAINER_NAME}/$_INITRAMFS
     fi
 
+    CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
+
     if [ $_IMG_BOOT -eq 1 ]; then
-      mount_boot $CONT_FILE
+      mount_boot ${CONT_FILE}
 
       if ! $(cmp $BOOT_MNT_DIR/$(basename ${_KERNEL}) $_KERNEL); then
         # update kernel:
@@ -477,7 +504,7 @@ esac
 
 # test and run
 if [ -z $RUN ] && [ ! -f $_KERNEL ]; then
-  echo "Can't find kernel"
+  echo "Can't find kernel: $_KERNEL"
   exit 3
 fi
 
@@ -511,35 +538,39 @@ fi
 # slow, but works well and no rush
 function run() {
   KERNEL_LINE="-kernel ${_KERNEL}"
-  KERNEL_PARAMS="console=tty1 console=ttyAMA0 root=/dev/mmcblk0p2 rw"
-  # console=ttyAMA1
 
-  # add initrd if its used
-  if [ -n "${_INITRAMFS}" ]; then
-    KERNEL_LINE="${KERNEL_LINE} -initrd ${_INITRAMFS}"
-  fi
+  if [ ! -f "${CMDLINE_FILE_PATH}" ]; then
+    # default kernel parameters
+    KERNEL_PARAMS="console=tty1 console=ttyAMA0 root=/dev/mmcblk0p2 rw"
+    # console=ttyAMA1
 
-  # Set parameters
-  if [ $_NO_PART_TABLE_MODE -eq 0 ]; then
-    KERNEL_PARAMS="${KERNEL_PARAMS} root=/dev/mmcblk0p2 rw"
+    # add initrd if its used
+    if [ -n "${_INITRAMFS}" ]; then
+      KERNEL_LINE="${KERNEL_LINE} -initrd ${_INITRAMFS}"
+    fi
+
+    # Set parameters
+    if [ $_NO_PART_TABLE_MODE -eq 0 ]; then
+      KERNEL_PARAMS="${KERNEL_PARAMS} root=/dev/mmcblk0p2 rw"
+    else
+      KERNEL_PARAMS="${KERNEL_PARAMS} modules=loop,squashfs,sd-mod,usb-storage"
+    fi
   else
-    KERNEL_PARAMS="${KERNEL_PARAMS} modules=loop,squashfs,sd-mod,usb-storage"
+    KERNEL_PARAMS=$(/usr/bin/cat "${CMDLINE_FILE_PATH}" | /usr/bin/tail -n 1)
   fi
 
-  KERNEL_LINE="${KERNEL_LINE} -append ${KERNEL_PARAMS}"
-
-  $RUN qemu-system-aarch64 \
+  $RUN /usr/bin/qemu-system-aarch64 \
     -M ${_MACHINE} \
     -cpu ${M_CPU} -m 1024 \
     -serial pty \
-    ${KERNEL_LINE} \
+    ${KERNEL_LINE} -append "${KERNEL_PARAMS}" \
     -drive id=sysdrive,if=none,format=raw,file=${CONT_FILE} \
     -device sd-card,drive=sysdrive \
     -usb \
     -device usb-kbd,bus=usb-bus.0 \
     -netdev user,id=net0,hostfwd=tcp::15022-:22 \
     -device usb-net,bus=usb-bus.0,netdev=net0 \
-    -drive id=imgout0,if=none,format=raw,file=../flavors/pi--linux.iso \
+    -drive id=imgout0,if=none,format=raw,file="${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img" \
     -device usb-storage,bus=usb-bus.0,drive=imgout0 \
     -dtb ${DTB_FILE} \
     -rtc base=localtime \
@@ -550,6 +581,11 @@ run
 
 if [ -n "$TEMP_CACHE_FILE" ] && [ -e "$TEMP_CACHE_FILE" ]; then
   $RUN rm "$TEMP_CACHE_FILE"
+
+  if [ $_IMG_BOOT -eq 1 ]; then
+    $RUN umount_boot
+  fi
 fi
+
 
 exit 0
