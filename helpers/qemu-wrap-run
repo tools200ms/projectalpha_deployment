@@ -167,6 +167,7 @@ function umount_boot() {
 _MODE=
 
 _IMG_BOOT=0
+_NO_PART_TABLE_MODE=-1
 
 _DEV_MODEL=$DEFAULT_DEVICE_MODEL
 _MACHINE=$_DEV_MODEL
@@ -430,6 +431,7 @@ EOF
       fi
     fi
 
+    # installation
     if [ $_NEW_CONTAINER -eq 1 ]; then
       $RUN cp $_KERNEL $DB_DIR/$_CONTAINER_NAME/
       _KERNEL=${DB_DIR}/${_CONTAINER_NAME}/$(basename ${_KERNEL})
@@ -488,9 +490,9 @@ EOF
   ;;
   list)
     if [ $_LIST_WITH_DETAILS -eq 1 ]; then
-      ls -lh $CACHE_DIR
+      ls -lh $DB_DIR
     else
-      ls $CACHE_DIR
+      ls $DB_DIR
     fi
 
     exit 0
@@ -539,29 +541,32 @@ fi
 function run() {
   KERNEL_LINE="-kernel ${_KERNEL}"
 
-  if [ ! -f "${CMDLINE_FILE_PATH}" ]; then
+  # add initrd if its used
+  if [ -n "${_INITRAMFS}" ]; then
+    KERNEL_LINE="${KERNEL_LINE} -initrd ${_INITRAMFS}"
+  fi
+
+  if [ ! -f "${CMDLINE_FILE_PATH}" ] && [ -f "${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt" ]; then
+    CMDLINE_FILE_PATH=${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt
+
+    KERNEL_PARAMS=$(tail -n 1 "${CMDLINE_FILE_PATH}")
+  else
     # default kernel parameters
     KERNEL_PARAMS="console=tty1 console=ttyAMA0 root=/dev/mmcblk0p2 rw"
     # console=ttyAMA1
 
-    # add initrd if its used
-    if [ -n "${_INITRAMFS}" ]; then
-      KERNEL_LINE="${KERNEL_LINE} -initrd ${_INITRAMFS}"
-    fi
-
     # Set parameters
-    if [ $_NO_PART_TABLE_MODE -eq 0 ]; then
+    if [ ${_NO_PART_TABLE_MODE} -eq 0 ]; then
       KERNEL_PARAMS="${KERNEL_PARAMS} root=/dev/mmcblk0p2 rw"
     else
       KERNEL_PARAMS="${KERNEL_PARAMS} modules=loop,squashfs,sd-mod,usb-storage"
     fi
-  else
-    KERNEL_PARAMS=$(/usr/bin/cat "${CMDLINE_FILE_PATH}" | /usr/bin/tail -n 1)
   fi
 
   $RUN /usr/bin/qemu-system-aarch64 \
     -M ${_MACHINE} \
     -cpu ${M_CPU} -m 1024 \
+    -monitor unix:/tmp/qemu-monitor,server,nowait \
     -serial pty \
     ${KERNEL_LINE} -append "${KERNEL_PARAMS}" \
     -drive id=sysdrive,if=none,format=raw,file=${CONT_FILE} \
@@ -570,17 +575,32 @@ function run() {
     -device usb-kbd,bus=usb-bus.0 \
     -netdev user,id=net0,hostfwd=tcp::15022-:22 \
     -device usb-net,bus=usb-bus.0,netdev=net0 \
-    -drive id=imgout0,if=none,format=raw,file="${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img" \
-    -device usb-storage,bus=usb-bus.0,drive=imgout0 \
     -dtb ${DTB_FILE} \
     -rtc base=localtime \
     -name "$_MACHINE emulator"
+
+    #     -drive id=imgout0,if=none,format=raw,file="${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img" \
+    #      -device usb-storage,bus=usb-bus.0,drive=imgout0 \
+}
+
+function insert_usbstick() {
+  PATH=$1
+
+  nc -U /tmp
+
+  drive_add 0 if=none,id=usbdrive1,format=raw,file=/var/cache/alpbase/ext_storage/tmp.kM761DOZIQ-container.img-01.img
+  device_add usb-storage,drive=usbdrive1,bus=usb-bus.0
+
+  # do stuff
+
+  device_del usbdrive1
 }
 
 run
 
 if [ -n "$TEMP_CACHE_FILE" ] && [ -e "$TEMP_CACHE_FILE" ]; then
   $RUN rm "$TEMP_CACHE_FILE"
+  $RUN rm ${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img
 
   if [ $_IMG_BOOT -eq 1 ]; then
     $RUN umount_boot

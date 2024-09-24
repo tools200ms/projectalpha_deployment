@@ -1,6 +1,14 @@
 
 
-# QEmuPyWrap
+# AlphaWrap
+This is a wrapper for `qemu-system-*` tools. QEmu is a Linux virtualization and emulation tool. 
+
+This wrapper has been developed to provide platform for launching and automation of an ARM (and other) based systems. 
+
+This is the dirigent that orchestrates distribution building and testing process.
+
+![Made with ChatGPT (accually ChatGPT made this)](../art/AlphaWrap.png)
+
 ## QEmu Python Wrapper
 
 
