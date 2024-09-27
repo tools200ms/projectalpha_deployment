@@ -24,10 +24,10 @@ function last_args() {
   echo "$@"
 }
 
-ONE_MIB=$(( 1024 * 1024 ))
-ONE_GIB=$(( 1024 * $ONE_MIB ))
+readonly ONE_MIB=$(( 1024 * 1024 ))
+readonly ONE_GIB=$(( 1024 * $ONE_MIB ))
 
-BOOT_FS_OFFSET=$(( 8192 * 512 ))
+readonly BOOT_FS_OFFSET=$(( 8192 * 512 ))
 
 declare -A devices_dtb
 declare -A devices_cpu
@@ -41,14 +41,16 @@ devices_dtb["raspi3b"]="raspios-bookworm-arm64/bcm2710-rpi-3-b.dtb"
 devices_cpu["raspi3b"]="cortex-a53"
 
 
-DTB_LIB="/var/lib/alpbase/dtb"
-BOOT_MNT_DIR="/mnt/img.boot"
+readonly DTB_LIB="/var/lib/alphawrap/dtb"
+readonly BOOT_MNT_DIR="/mnt/img.boot"
 
 #CACHE_DIR="/var/cache/pilinux"
-CACHE_DIR="/var/cache/alpbase"
-DB_DIR="/var/cache/alpbase/db"
-EXTSTORE_DIR="/var/cache/alpbase/ext_storage"
-TEMP_DIR="/var/tmp"
+readonly CACHE_DIR="/var/cache/alphawrap"
+readonly DB_DIR="/var/cache/alphawrap/db"
+readonly EXTSTORE_DIR="/var/cache/alphawrap/ext_storage"
+readonly TEMP_DIR="/var/tmp"
+
+readonly QEMU_MONITOR_UNIXSOCKET="/tmp/qemu-monitor"
 
 $RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
 
@@ -72,7 +74,22 @@ $(basename $0) <container name or id>
 
 List containers:
 $(basename $0) ls --full|-f
-  ls - list
+  ls - list of continers
+
+List attachable images:
+$(basename $0) extstorage [ls --full|-f] | [add <name|path> SIZE]
+  extstorage ls - list attachable images
+    --full|-f   - list attachable images with detail
+
+  extstorage add - add attachable storage to machine, the storage will be avaliable as USB stick.
+                   Storage can be identified by path, or name, if identified by path, $(basename $0)
+                   is expecting file name. Indicated file will be attached to machine as a storage device.
+                   If name provided, $(basename $0) will search for image in its internel storage system.
+
+                   If storage exists, it will be attached to the machine. In order to create storage, non
+                   existing image name or path must be provided followed by size. $(basename $0) will create
+                   sorage of a given size and attach it to machine.
+                   Storage is initiated with zeros.
 
 EOF
 }
@@ -83,8 +100,8 @@ EOF
 # image file to ensure that its size is
 # exactly 2^<power> bites.
 function prepare_mmc_imgfile() {
-  IMAGE_PATH="$1"
-  CACHE_FILE="$2"
+  local IMAGE_PATH="$1"
+  local CACHE_FILE="$2"
 
   if [ ! -f "$CACHE_FILE" ] || [ ! -s "$CACHE_FILE" ] ; then
     # if file does not exists, or is a zero size copy image
@@ -129,14 +146,14 @@ function prepare_mmc_imgfile() {
 }
 
 function prepare_usbstick() {
-  PATH=$1
-  SIZE_MB=$2
+  local PATH=$1
+  local SIZE_MB=$2
 
   $RUN /usr/bin/dd bs=$ONE_MIB count=${SIZE_MB} if="/dev/zero" of="${PATH}"
 }
 
 function mount_boot() {
-  WORK_IMG=$1
+  local WORK_IMG=$1
 
   # Get available loop device, normally '/dev/loop0'
   if [ -z "$RUN" ]; then
@@ -265,6 +282,63 @@ function parse_container_name() {
   _CONTAINER_NAME=$1
 }
 
+_EXTSTORAGE_REF=
+_EXTSTORAGE_SIZE=
+
+function parse_extstorage() {
+  _EXTSTORAGE_REF=$1
+}
+
+function parse_size() {
+  local input="$1"
+  local number
+  local unit
+  local result
+
+  # Use regular expression to match the number and unit (MB, GB, MiB, GiB)
+  if [[ "$input" =~ ^([0-9]+(\.[0-9]+)?)\ ?(MB|GB|MiB|GiB)$ ]]; then
+    number="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[3]}"
+
+    case "$unit" in
+      MB)
+        result=$(echo "scale=2; $number * 0.953674" | bc)
+      ;;
+      GB)
+        result=$(echo "scale=2; $number * 953.674" | bc)
+      ;;
+      MiB)
+        result="$number"
+      ;;
+      GiB)
+        result=$(echo "scale=2; $number * 1024" | bc)
+
+      ;;
+    esac
+
+    # Round up to the nearest integer using awk
+    _EXTSTORAGE_SIZE=$(echo "$result" | awk '{print ($1 == int($1)) ? $1 : int($1)+1}')
+    echo "$_EXTSTORAGE_SIZE"
+  else
+    echo "Invalid input. Please provide a number followed by MB, GB, MiB, or GiB."
+    return 1
+  fi
+}
+
+set_validate_extstor_add() {
+  loal FILENAME=
+
+  if [[ "$_EXTSTORAGE_REF" =~ ^([a-zA-Z0-9_/-]){1,1024}.img$ ]] ; then
+    FILENAME=$_EXTSTORAGE_REF
+  elif [[ "$_EXTSTORAGE_REF" =~ ^([a-zA-Z0-9_-]){1,128}$ ]] ; then
+    FILENAME=${EXTSTORAGE_DIR}/${_EXTSTORAGE_REF}.img
+  fi
+
+  if [ ! -f "$_EXTSTORAGE_REF" ]; then
+    if
+    $EXTSTORAGE_DIR/
+  fi
+}
 
 _parse_now=
 setter_fn=
@@ -347,15 +421,26 @@ for opt in "$@"; do
       _parse_now="?container_name"
       setter_fn="create_container"
     ;;
-    --help|-h)
-      print_help
-      exit 0
+    extstorage)
+      _MODE="extstorage"
+    ;;
+    add)
+      if [ "$_MODE" == "extstorage" ];
+        _parse_now="?size"
+        setter_fn="validate_extstor_add"
+      else
+        exit 2
+      fi
     ;;
     ls)
       _MODE="list"
     ;;
     --full|-f)
       _LIST_WITH_DETAILS=1
+    ;;
+    --help|-h)
+      print_help
+      exit 0
     ;;
     *)
       # probe:
@@ -566,7 +651,7 @@ function run() {
   $RUN /usr/bin/qemu-system-aarch64 \
     -M ${_MACHINE} \
     -cpu ${M_CPU} -m 1024 \
-    -monitor unix:/tmp/qemu-monitor,server,nowait \
+    -monitor unix:$QEMU_MONITOR_UNIXSOCKET,server,nowait \
     -serial pty \
     ${KERNEL_LINE} -append "${KERNEL_PARAMS}" \
     -drive id=sysdrive,if=none,format=raw,file=${CONT_FILE} \
@@ -584,12 +669,13 @@ function run() {
 }
 
 function insert_usbstick() {
-  PATH=$1
+  local PATH=$1
 
-  nc -U /tmp
-
-  drive_add 0 if=none,id=usbdrive1,format=raw,file=/var/cache/alpbase/ext_storage/tmp.kM761DOZIQ-container.img-01.img
-  device_add usb-storage,drive=usbdrive1,bus=usb-bus.0
+  nc -U $QEMU_MONITOR_UNIXSOCKET -q 0 <<EOF
+info usb
+EOF
+#  drive_add 0 if=none,id=usbdrive1,format=raw,file=$PATH
+#  device_add usb-storage,drive=usbdrive1,bus=usb-bus.0
 
   # do stuff
 
