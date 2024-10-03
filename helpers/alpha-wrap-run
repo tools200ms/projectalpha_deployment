@@ -52,44 +52,94 @@ readonly TEMP_DIR="/var/tmp"
 
 readonly QEMU_MONITOR_UNIXSOCKET="/tmp/qemu-monitor"
 
-$RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
+readonly DEFAULT_DEVICE_MODEL="raspi3b"
 
-DEFAULT_DEVICE_MODEL="raspi3b"
+# Global variables:
+# From parameters:
+_MODE=
+
+_IMG_BOOT=0
+_NO_PART_TABLE_MODE=-1
+
+_DEV_MODEL=${DEFAULT_DEVICE_MODEL}
+_MACHINE=$_DEV_MODEL
+
+_IMG_FILE=
+_KERNEL=vmlinuz
+_INITRAMFS=
+
+_NEW_CONTAINER=0
+_CONTAINER_NAME=
+
+_LIST_WITH_DETAILS=0
+
+# Run-time globals
+_LOBOOT_DEV=
+
 
 function print_help() {
     cat <<EOF
-Launch VM:
-$(basename $0) --device|-d [raspi3b] <img file> --imgboot|-i y|n <kernel> <initramfs> --new|-n <name>
+Usage:
+Creating container:
+$(basename $0) --device|-d [raspi3b] <img file> --imgboot|-i y|n <kernel> <initramfs> --name|-n <name>
 
-  --device|-d - model of the emulated device (default: '$DEFAULT_DEVICE_MODEL')
-  <img file>  - path to image file to be mounted as mmc
-  --imgboot|-i y|n - if 'y' find <kernel> and <initramfs> in a boot
-                      partition of the image file.
-                      if 'n' <kernel> and <initramfs> point to an external
-                      files
-  --new|-n - persistent, create new container, it's name will be returned
+  --device|-d      - Model of the emulated device (default: '${DEFAULT_DEVICE_MODEL}').
+  <img file>       - Path to image file to be mounted as 'mmcblk0'.
+  --imgboot|-i y|n - If 'y' load <kernel> and <initramfs> from a boot
+                     partition of the image file.
+                     If 'n' load <kernel> and <initramfs> from file.
+                     <kernel>    - Path to kernel, if '-i y' path within
+                                   boot partition of the image file.
+                                   If '-i n' path to kernel file that is
+                                   located at host.
+                     <initramfs> - Path to initramfs, if '-i y' path within
+                                   boot partition of the image file.
+                                   If '-i n' path to initramfs file that is
+                                   located at host.
+                     Initramfs is optional, if not provided emulated system
+                     will boot with just kernel image. It means that kernel
+                     must have all modules to mount root fs as well as to
+                     access necessary devices such as disk controller.
 
-Launch VM based on created container:
-$(basename $0) <container name or id>
+                     Also, <kernel> path might be skiped, in this case default
+                     '${_KERNEL}' is loaded from boot image file partition
+                     (if '-i y'), or current directory of a local file system
+                     (if '-i n'). In this case initramfs can't be used.
 
-List containers:
+  --name|-n        - Create named container, in option '-n' is followed by
+                     <name> container with a given name is created.
+                     If only option '-n' is provided container with random name
+                     is created, name of the container is displayed upon launch.
+
+                     If option '-n' is not provided then temporary container is
+                     created - it will be removed after machine is stopped.
+
+Launching container:
+$(basename $0) <container name>
+  This will launch container that has been created from an image.
+
+
+Listing containers:
 $(basename $0) ls --full|-f
-  ls - list of continers
+  ls - list all defined containers
 
-List attachable images:
-$(basename $0) extstorage [ls --full|-f] | [add <name|path> SIZE]
-  extstorage ls - list attachable images
-    --full|-f   - list attachable images with detail
+Attachable (extstore) image operations:
+$(basename $0) extstore [ls --full|-f] | [add <name|path> SIZE] | [eject]
+  Container can have virtually attached external ("USB stick") storage.
 
-  extstorage add - add attachable storage to machine, the storage will be avaliable as USB stick.
-                   Storage can be identified by path, or name, if identified by path, $(basename $0)
-                   is expecting file name. Indicated file will be attached to machine as a storage device.
-                   If name provided, $(basename $0) will search for image in its internel storage system.
+  extstore ls  - list attachable images
+    --full|-f  - list attachable images with details
 
-                   If storage exists, it will be attached to the machine. In order to create storage, non
-                   existing image name or path must be provided followed by size. $(basename $0) will create
-                   sorage of a given size and attach it to machine.
-                   Storage is initiated with zeros.
+  extstore add - add 'external' storage to machine, the storage will be available as USB stick.
+                 Storage can be identified by a path, or name. If identified by path, '$(basename $0)'
+                 is expecting a file name. Indicated file will be attached to machine as a storage device.
+                 If name provided, '$(basename $0)' will search for an attachable image in its internal storage system.
+
+                 If storage exists, it will be attached to the machine. In order to create storage, non
+                 existing image name or path must be provided followed by a size. '$(basename $0)' will create
+                 storage of a given size and attach it to the machine.
+
+                 New storage is automatically initiated with zeros.
 
 EOF
 }
@@ -180,31 +230,15 @@ function umount_boot() {
   $RUN losetup -d ${_LOBOOT_DEV}
 }
 
-# Image, Container, list
-_MODE=
-
-_IMG_BOOT=0
-_NO_PART_TABLE_MODE=-1
-
-_DEV_MODEL=$DEFAULT_DEVICE_MODEL
-_MACHINE=$_DEV_MODEL
-
-_IMG_FILE=
-_KERNEL=vmlinuz
-_INITRAMFS=
-
-_NEW_CONTAINER=0
-_CONTAINER_NAME=
-
-_LIST_WITH_DETAILS=0
-
-_LOBOOT_DEV=
 
 function set_flag_imgboot() {
-  _IMG_BOOT=$1
+  if [ -z "$2" ] && [ "yes_no" == "$2" ]; then
+    _IMG_BOOT=$1
+  fi
 }
 
 function set_create_container() {
+  if [ -z "$2" ] && [ "yes_no" == "$2" ]; then
   _NEW_CONTAINER=1
 
   if [ -z "$_CONTAINER_NAME" ]; then
@@ -325,12 +359,12 @@ function parse_size() {
   fi
 }
 
-set_validate_extstor_add() {
+function set_validate_extstore_add() {
   loal FILENAME=
 
-  if [[ "$_EXTSTORAGE_REF" =~ ^([a-zA-Z0-9_/-]){1,1024}.img$ ]] ; then
-    FILENAME=$_EXTSTORAGE_REF
-  elif [[ "$_EXTSTORAGE_REF" =~ ^([a-zA-Z0-9_-]){1,128}$ ]] ; then
+  if [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_/-]){1,1024}.img$ ]] ; then
+    FILENAME=${_EXTSTORAGE_REF}
+  elif [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_-]){1,128}$ ]] ; then
     FILENAME=${EXTSTORAGE_DIR}/${_EXTSTORAGE_REF}.img
   fi
 
@@ -340,7 +374,15 @@ set_validate_extstor_add() {
   fi
 }
 
-_parse_now=
+# Parser 'global' variables
+# "parse_now", "param_chain" and "setter_fn" has been defined to handle
+# variable parameter "chains"
+# Once when 'option' has been identified such as 'ls', '--name'
+# variables: 'parse_now', 'parse_chain' and 'setter_fn'
+# are used to handle variable argument length parsing
+# Thus, some options might be optional making command line
+# more user friendly.
+# parse_now is the
 setter_fn=
 param_chain=
 
@@ -350,47 +392,60 @@ param_chain=
 #         continue parsing
 function parse() {
   local opt=$1
+  local _parse_now=$(first_arg $param_chain)
 
-  if [ -n "$_parse_now" ]; then
-    if [[ "${_parse_now:0:1}" == '?' ]]; then
-      opt_param=1
-      _parse_now="${_parse_now:1}"
-    else
-      opt_param=0
-    fi
-
-    if [[ "${opt:0:1}" == "-" ]]; then
-      if [ $opt_param -eq 0 ]; then
-        echo "Illegal parameter (starting with '-')"
-        exit 1
-      else
-        _parse_now=
-        setter_fn=
-        param_chain=
-        #eval "parse_$_parse_now"
-        return 0
-      fi
-    fi
-
-    if [ -n "$opt" ]; then
-      eval "parse_$_parse_now $opt"
-      res_code=$?
-    else
-      res_code=0
-    fi
-
-    if [ -n "$setter_fn" ]; then
-      eval "set_$setter_fn" $res_code $parse_now
-      setter_fn=
-    fi
-
-    _parse_now=$(first_arg $param_chain)
-    param_chain=$(last_args $param_chain)
-
-    return 1
+  if [ -z "$_parse_now" ]; then
+    return 0
   fi
 
-  return 0
+  param_chain=$(last_args $param_chain)
+
+  if [[ "${_parse_now:0:1}" == '?' ]]; then
+    opt_param=1
+    _parse_now="${_parse_now:1}"
+  else
+    opt_param=0
+  fi
+
+  if [[ "${opt:0:1}" == "-" ]]; then
+    if [ $opt_param -eq 0 ]; then
+      echo "Illegal parameter (starting with '-')"
+      exit 1
+    else
+      if [ -n "$setter_fn" ]; then
+        eval "set_$setter_fn"
+        setter_fn=
+      fi
+
+      _parse_now=
+      param_chain=
+
+      return 0
+    fi
+  fi
+
+  if [ -n "$opt" ]; then
+    eval "parse_$_parse_now $opt"
+    res_code=$?
+
+    if [ -n "$setter_fn" ]; then
+      eval "set_$setter_fn" $res_code $_parse_now
+      #setter_fn=
+    fi
+  else
+    res_code=0
+  fi
+
+  if [ -n "$setter_fn" ] && [ -z "$param_chain" ]; then
+    # final seter call
+    eval "set_$setter_fn"
+    setter_fn=
+  fi
+
+  #_parse_now=$(first_arg $param_chain)
+  #param_chain=$(last_args $param_chain)
+
+  return 1
 }
 
 function root_required() {
@@ -401,7 +456,10 @@ function root_required() {
   fi
 }
 
+# Check environment:
+$RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
 
+# parse argument loop
 for opt in "$@"; do
   if ! parse $opt; then
     # take next argument
@@ -410,30 +468,37 @@ for opt in "$@"; do
 
   case $opt in
     --device|-d)
-      _parse_now="devmodel_name"
+      param_chain="devmodel_name"
     ;;
     --imgboot|-i)
-      _parse_now="yes_no"
+      #_parse_now="yes_no"
       setter_fn="flag_imgboot"
-      param_chain="?kernel_name ?initramfs_name"
+      param_chain="yes_no ?kernel_name ?initramfs_name"
     ;;
-    --new|-n)
-      _parse_now="?container_name"
+    --name|-n)
+      param_chain="?container_name"
       setter_fn="create_container"
     ;;
     extstorage)
-      _MODE="extstorage"
+      _MODE="extstore"
     ;;
     add)
-      if [ "$_MODE" == "extstorage" ];
-        _parse_now="?size"
-        setter_fn="validate_extstor_add"
+      if [ "$_MODE" == "extstore" ]; then
+        #_parse_now=""
+        param_chain="?size"
+        setter_fn="validate_extstore_add"
       else
         exit 2
       fi
     ;;
     ls)
-      _MODE="list"
+      if [ -z "$_MODE" ]; then
+        _MODE="list"
+      elif [ "$_MODE" == "extstore" ]; then
+         set sub option
+      else
+        exit 2
+      fi
     ;;
     --full|-f)
       _LIST_WITH_DETAILS=1
@@ -470,7 +535,6 @@ case $_MODE in
     echo "Run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
     if [ $_NEW_CONTAINER -eq 1 ]; then
       echo "Creating continer: $_CONTAINER_NAME"
-
 
       CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
       if [ -f $CONT_FILE ]; then
@@ -589,14 +653,21 @@ EOF
   ;;
 esac
 
-# test and run
-if [ -z $RUN ] && [ ! -f $_KERNEL ]; then
-  echo "Can't find kernel: $_KERNEL"
+# Test and run:
+
+# At this point in the case of '--imgboot y' image boot partition is
+# mounted and ${_KERNEL} and ${_INITRAMFS} (if defined) is a path to
+# file within mounted boot partition.
+# Therefore below code tests for kernel and initramfs existsnce
+# regardless of '--imgboot' option.
+
+if [ -z $RUN ] && [ ! -f ${_KERNEL} ]; then
+  echo "Can't find kernel: ${_KERNEL}"
   exit 3
 fi
 
-if [ -n "${_INITRAMFS}" ] && [ ! -f "${_INITRAMFS}" ]; then
-  echo "Initramfs file does not exits ar is not available"
+if [ -z $RUN ] && [ -n "${_INITRAMFS}" ] && [ ! -f "${_INITRAMFS}" ]; then
+  echo "Initramfs file does not exits or it's not permited to acces it."
   exit 3
 fi
 
@@ -679,7 +750,7 @@ EOF
 
   # do stuff
 
-  device_del usbdrive1
+  #device_del usbdrive1
 }
 
 run
