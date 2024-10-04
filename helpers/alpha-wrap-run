@@ -130,16 +130,26 @@ $(basename $0) extstore [ls --full|-f] | [add <name|path> SIZE] | [eject]
   extstore ls  - list attachable images
     --full|-f  - list attachable images with details
 
-  extstore add - add 'external' storage to machine, the storage will be available as USB stick.
-                 Storage can be identified by a path, or name. If identified by path, '$(basename $0)'
-                 is expecting a file name. Indicated file will be attached to machine as a storage device.
-                 If name provided, '$(basename $0)' will search for an attachable image in its internal storage system.
+  extstore add - add 'external' storage to machine, the storage will be
+                 available as USB stick. Storage can be identified by a path,
+                 or name. If identified by path, '$(basename $0)' is expecting
+                 a file name. Indicated file will be attached to machine as a
+                 storage device.
+                 If name provided, '$(basename $0)' will search for an
+                 attachable image in its internal storage system.
 
-                 If storage exists, it will be attached to the machine. In order to create storage, non
-                 existing image name or path must be provided followed by a size. '$(basename $0)' will create
-                 storage of a given size and attach it to the machine.
+                 If storage exists, it will be attached to the machine.
+                 In order to create storage, non existing image name or path
+                 must be provided followed by a size. '$(basename $0)' will
+                 create storage of a given size and attach it to the machine.
 
                  New storage is automatically initiated with zeros.
+                 Default SIZE unit is MiB, SIZE can be postfixed by MiB, MB,
+                 GiG, GB e.g.: 2GB
+
+Initialization:
+$(basename $0) init
+  Create storage backends, databases etc. for $(basename $0)
 
 EOF
 }
@@ -230,6 +240,12 @@ function umount_boot() {
   $RUN losetup -d ${_LOBOOT_DEV}
 }
 
+# Check environment:
+function check_environment() {
+  $RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
+}
+
+# Command line parsing functions:
 
 function set_flag_imgboot() {
   if [ -z "$2" ] && [ "yes_no" == "$2" ]; then
@@ -238,11 +254,13 @@ function set_flag_imgboot() {
 }
 
 function set_create_container() {
-  if [ -z "$2" ] && [ "yes_no" == "$2" ]; then
-  _NEW_CONTAINER=1
 
-  if [ -z "$_CONTAINER_NAME" ]; then
-    _CONTAINER_NAME="$(shuf -n 1 ./verbs.txt)-$(shuf -n 1 ./nouns.txt)"
+  if [ -z "$2" ]; then
+    if [ -z "${_CONTAINER_NAME}" ]; then
+      _CONTAINER_NAME="$(shuf -n 1 ./verbs.txt)-$(shuf -n 1 ./nouns.txt)"
+    fi
+
+    _NEW_CONTAINER=1
   fi
 }
 
@@ -316,10 +334,13 @@ function parse_container_name() {
   _CONTAINER_NAME=$1
 }
 
+_EXTSTORAGE_MODE=
 _EXTSTORAGE_REF=
+_EXTSTORAGE_REF_ISINTERNAL=
 _EXTSTORAGE_SIZE=
 
 function parse_extstorage() {
+  # validation is in: set_validate_extstore_add
   _EXTSTORAGE_REF=$1
 }
 
@@ -346,7 +367,6 @@ function parse_size() {
       ;;
       GiB)
         result=$(echo "scale=2; $number * 1024" | bc)
-
       ;;
     esac
 
@@ -362,16 +382,53 @@ function parse_size() {
 function set_validate_extstore_add() {
   loal FILENAME=
 
-  if [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_/-]){1,1024}.img$ ]] ; then
-    FILENAME=${_EXTSTORAGE_REF}
-  elif [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_-]){1,128}$ ]] ; then
-    FILENAME=${EXTSTORAGE_DIR}/${_EXTSTORAGE_REF}.img
+  if [ -n "${2}" ]; then
+    # skipp "per parameter" setter call
+    # proceed in the case of "finale" call (when all variables are ready)
+    return
   fi
 
-  if [ ! -f "$_EXTSTORAGE_REF" ]; then
-    if
-    $EXTSTORAGE_DIR/
+  if [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_/-\.]){1,1024}$ ]] ; then
+    FILENAME="${_EXTSTORAGE_REF}"
+    _EXTSTORAGE_REF_ISINTERNAL=0
+    # probe if it's a file name:
+    if [ -f "${FILENAME}" ]; then
+      if [ -n "${_EXTSTORAGE_SIZE}" ]; then
+        echo "Image already exists, excess size declaration, exiting"
+        exit 5
+      fi
+
+      return
+    fi
   fi
+
+  if [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_-]){1,128}$ ]]; then
+    FILENAME=${EXTSTORAGE_DIR}/${_EXTSTORAGE_REF}.img
+    _EXTSTORAGE_REF_ISINTERNAL=1
+
+    if [ -f "${FILENAME}" ]; then
+      if [ -n "${_EXTSTORAGE_SIZE}" ]; then
+        echo "Image already exists, excess size declaration, exiting"
+        exit 5
+      fi
+
+      return
+    fi
+  fi
+
+  if [ -z "${FILENAME=}" ]; then
+    echo "Incorrect image file path or name"
+    exit 4
+  fi
+
+  # create image if size was given:
+
+  if [ -z "${_EXTSTORAGE_SIZE}" ]; then
+    echo "No size has been provided"
+    exit 4
+  fi
+
+  prepare_usbstick "${FILENAME}" ${_EXTSTORAGE_SIZE}
 }
 
 # Parser 'global' variables
@@ -456,8 +513,27 @@ function root_required() {
   fi
 }
 
-# Check environment:
-$RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
+function lock_mode() {
+  local mode=$1
+
+  if [ -z "${_MODE}" ]; then
+    _MODE=${mode}
+  else [ "${_MODE}" != ${mode} ]
+    echo "Syntax error."
+    exit 2
+  fi
+}
+
+function has_mode() {
+  if [ -n "${_MODE}" ] && [ "${_MODE}" == "$1" ]; then
+    # True
+    return 0
+  fi
+
+  # False
+  return 1
+}
+
 
 # parse argument loop
 for opt in "$@"; do
@@ -468,10 +544,12 @@ for opt in "$@"; do
 
   case $opt in
     --device|-d)
+      lock_mode "image"
       param_chain="devmodel_name"
     ;;
     --imgboot|-i)
-      #_parse_now="yes_no"
+      lock_mode "image"
+
       setter_fn="flag_imgboot"
       param_chain="yes_no ?kernel_name ?initramfs_name"
     ;;
@@ -480,24 +558,21 @@ for opt in "$@"; do
       setter_fn="create_container"
     ;;
     extstorage)
-      _MODE="extstore"
+      lock_mode "extstore"
     ;;
     add)
-      if [ "$_MODE" == "extstore" ]; then
-        #_parse_now=""
-        param_chain="?size"
-        setter_fn="validate_extstore_add"
-      else
-        exit 2
-      fi
+      lock_mode "extstore"
+      _EXTSTORAGE_MODE="add"
+
+      #_parse_now=""
+      param_chain="?size"
+      setter_fn="validate_extstore_add"
     ;;
     ls)
-      if [ -z "$_MODE" ]; then
-        _MODE="list"
-      elif [ "$_MODE" == "extstore" ]; then
-         set sub option
+      if $(has_mode "extstore"); then
+        _EXTSTORAGE_MODE="ls"
       else
-        exit 2
+        lock_mode "list"
       fi
     ;;
     --full|-f)
@@ -506,6 +581,9 @@ for opt in "$@"; do
     --help|-h)
       print_help
       exit 0
+    ;;
+    init)
+      lock_mode "init"
     ;;
     *)
       # probe:
@@ -532,6 +610,8 @@ fi
 case $_MODE in
   image)
     root_required
+    check_environment $_MODE
+
     echo "Run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
     if [ $_NEW_CONTAINER -eq 1 ]; then
       echo "Creating continer: $_CONTAINER_NAME"
@@ -607,6 +687,8 @@ EOF
 
   container)
     root_required
+    check_environment $_MODE
+
     echo "Run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
 
     _MACHINE=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^device'))
@@ -638,11 +720,21 @@ EOF
     fi
   ;;
   list)
+    check_environment $_MODE
+
     if [ $_LIST_WITH_DETAILS -eq 1 ]; then
       ls -lh $DB_DIR
     else
       ls $DB_DIR
     fi
+
+    exit 0
+  ;;
+  init)
+    root_required
+    echo "Initializing $(basename $0) database and storage"
+
+    check_environment $_MODE
 
     exit 0
   ;;
