@@ -8,11 +8,11 @@ services:
     build:
       context: .
     volumes:
-      - ./files/entry.sh:/entry.sh
-      - ./files/prepare_image.sh:/usr/local/bin/prepare_image.sh
+      - ./entry.sh:/entry.sh
+      - ./prepare_image.sh:/usr/local/bin/prepare_image.sh
 
-      - ./iso:/iso
-      - ./files/system:/system
+      - ../iso:/iso
+      - ../files/system:/system
 
     networks:
       - nat-net

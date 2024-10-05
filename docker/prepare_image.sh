@@ -161,7 +161,7 @@ eval "echo $(cat /system/cmdline.txt)" > /mnt/dist/boot/cmdline.txt
 #for pkg in $(find $ISO_ROOT/build/apks | grep -e '\.apk$'); do tar -xzf "$pkg" -C /mnt/dist/root/; done
 tar -xvf /iso/org.alp.tar -C /mnt/dist/root/
 
-clan_mounts() {
+clean_mounts() {
   # Umount
   umount /mnt/dist/boot
   umount /mnt/dist/root

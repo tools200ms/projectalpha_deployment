@@ -1,24 +1,43 @@
 
-# AlpBase Linux Distribution
 
-Alpine Linux is a light-weight Linux distribution that is well suited for embedded devices.
+# AlphaWrap
+This is a wrapper for `qemu-system-*` tools. QEmu is a Linux virtualization and emulation tool. 
 
-Raspberry pi is a very popular (martians migh not hear about it) microcomputer featured by GPIO pins that let on easy extencion of its capabilities by displays.
+This wrapper has been developed to provide platform for launching and automation of an ARM (and other) based systems. 
 
-The aim of this project is to provide means for building 'automated' Alpine Linux image. When it is copied to SD card and inserted into Pi, system after powering on will perform automatic setup for a desired configuration.
+This is wrapper has been developed to managed 
 
-Project's principle are:
+orchestrate distribution building and testing process.
+
+![Made with ChatGPT (accually ChatGPT made this)](./art/AlphaWrap.png)
+
+## QEmu Python Wrapper
 
 
-Unfortunately it is quite common to meet projects that setup default user and password with a trust that it will be changed on time. 
+### Raspberry Pi OS
+[Download Raspberry Pi OS (preferably 64-bit and Lite version - who needs Desktop?)](https://www.raspberrypi.com/software/operating-systems/#raspberry-pi-os-64-bit), once done and saved run emulation: 
 
-Handshake -password less access.
-1. 'Phisical contact' Do not use default passwords, device access should be granted once when user touches button or sensor, in other words after physical interaction with a device
-2. Once when device opens access, user anters 
-3. 
-4. openning password-less  it should be heedful about it, meaning: 
-   1. there should be timeout
-   2. system should monitor access attempts letting exactly one user to access
-3. When access is granted user can set password, or other authentication methods
+```bash
+./alpha-wrap-run -d raspi3b <pathto>/<date>-raspios-<release_name>-arm64-lite.img \
+        -i y kernel8.img initramfs8
+```
 
-The aim is to promote properly sealed devices.
+### DietPi
+DietPi is Debian based distribution tuned for a wide variety of a Single Board Computers. Download ["Raspberry Pi 2/3/4/Zero 2"](https://dietpi.com/#download) image and run emulation with: 
+```bash
+alpha-wrap-run -d raspi3b <pathto>/DietPi_RPi-ARMv8-<release_name>.img \
+        -i y kernel8.img
+```
+*Note:* Diet Pi does not require Initial ramdisk (initramfs), kernel is tuned for a specific board so kernel does not need to make use of initramfs to boot (slimer system, faster boot).
+
+### Alpine
+
+Download [Alpine for Raspberry Pi, preferebly aarch64](https://www.alpinelinux.org/downloads/).
+
+Run emulation with: 
+```bash
+alpha-wrap-run -d raspi3b <pathto>alpine-rpi-<version>-aarch64.img \
+        -i y boot/vmlinuz-rpi boot/initramfs-rpi
+```
+This will lunch alpine installation.
+
