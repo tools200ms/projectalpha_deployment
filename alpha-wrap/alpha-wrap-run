@@ -44,11 +44,13 @@ devices_cpu["raspi3b"]="cortex-a53"
 readonly DTB_LIB="/var/lib/alphawrap/dtb"
 readonly BOOT_MNT_DIR="/mnt/img.boot"
 
-#CACHE_DIR="/var/cache/pilinux"
 readonly CACHE_DIR="/var/cache/alphawrap"
 readonly DB_DIR="/var/cache/alphawrap/db"
 readonly EXTSTORE_DIR="/var/cache/alphawrap/ext_storage"
 readonly TEMP_DIR="/var/tmp"
+
+readonly SHARE_SPACE_FILE=${CACHE_DIR}/__share_space.iso
+readonly SHARE_SPACE_SIZE_MIB=100
 
 readonly QEMU_MONITOR_UNIXSOCKET="/tmp/qemu-monitor"
 
@@ -243,6 +245,11 @@ function umount_boot() {
 # Check environment:
 function check_environment() {
   $RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
+
+  if [ ! -f "${SHARE_SPACE_FILE}" ]; then
+    $RUN dd bs=${ONE_MIB} if=/dev/zero of="${SHARE_SPACE_FILE}" count=${SHARE_SPACE_SIZE_MIB}
+    $RUN mkfs.ext4 -L VM.SHARE "${SHARE_SPACE_FILE}"
+  fi
 }
 
 # Command line parsing functions:
@@ -298,15 +305,6 @@ function parse_devmodel_name() {
   echo "Loading: $_MACHINE"
 }
 
-function parse_imgfile_path() {
-  if [ ! -f "$1" ]; then
-    echo "Provide path to an existing file"
-    exit 3
-  fi
-
-  _IMG_FILE=$(realpath "$1")
-}
-
 function parse_kernel_name() {
   if [[ ! "$1" =~ ^([a-zA-Z0-9_/-]){1,128}$ ]]; then
     echo "Illegal kernel name"
@@ -323,6 +321,15 @@ function parse_initramfs_name() {
   fi
 
   _INITRAMFS=$1
+}
+
+function parse_imgfile_path() {
+  if [ ! -f "$1" ]; then
+    echo "Provide path to an existing file"
+    exit 3
+  fi
+
+  _IMG_FILE=$(realpath "$1")
 }
 
 function parse_container_name() {
@@ -380,7 +387,7 @@ function parse_size() {
 }
 
 function set_validate_extstore_add() {
-  loal FILENAME=
+  local FILENAME=
 
   if [ -n "${2}" ]; then
     # skipp "per parameter" setter call
@@ -388,7 +395,7 @@ function set_validate_extstore_add() {
     return
   fi
 
-  if [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_/-\.]){1,1024}$ ]] ; then
+  if [[ "${_EXTSTORAGE_REF}" =~ ^[a-zA-Z0-9/\._\-]{1,1024}$ ]] ; then
     FILENAME="${_EXTSTORAGE_REF}"
     _EXTSTORAGE_REF_ISINTERNAL=0
     # probe if it's a file name:
@@ -402,8 +409,11 @@ function set_validate_extstore_add() {
     fi
   fi
 
-  if [[ "${_EXTSTORAGE_REF}" =~ ^([a-zA-Z0-9_-]){1,128}$ ]]; then
-    FILENAME=${EXTSTORAGE_DIR}/${_EXTSTORAGE_REF}.img
+  if [[ "${_EXTSTORAGE_REF}" =~ ^[a-zA-Z0-9\._\-]{1,256}$ ]]; then
+    FILENAME=${EXTSTORE_DIR}/${_EXTSTORAGE_REF}
+
+    # make global variable correction (ugly)
+    _EXTSTORAGE_REF="${FILENAME}"
     _EXTSTORAGE_REF_ISINTERNAL=1
 
     if [ -f "${FILENAME}" ]; then
@@ -428,7 +438,7 @@ function set_validate_extstore_add() {
     exit 4
   fi
 
-  prepare_usbstick "${FILENAME}" ${_EXTSTORAGE_SIZE}
+  prepare_usbstick "${_EXTSTORAGE_REF}" ${_EXTSTORAGE_SIZE}
 }
 
 # Parser 'global' variables
@@ -518,7 +528,7 @@ function lock_mode() {
 
   if [ -z "${_MODE}" ]; then
     _MODE=${mode}
-  else [ "${_MODE}" != ${mode} ]
+  elif [ "${_MODE}" != ${mode} ]; then
     echo "Syntax error."
     exit 2
   fi
@@ -557,16 +567,25 @@ for opt in "$@"; do
       param_chain="?container_name"
       setter_fn="create_container"
     ;;
-    extstorage)
+    extstore)
       lock_mode "extstore"
     ;;
     add)
       lock_mode "extstore"
+
       _EXTSTORAGE_MODE="add"
 
       #_parse_now=""
-      param_chain="?size"
+      param_chain="extstorage ?size"
       setter_fn="validate_extstore_add"
+    ;;
+    eject)
+      if $(has_mode "extstore"); then
+        _EXTSTORAGE_MODE="eject"
+      else
+        echo "Wrong syntax"
+        exit 2
+      fi
     ;;
     ls)
       if $(has_mode "extstore"); then
@@ -586,7 +605,7 @@ for opt in "$@"; do
       lock_mode "init"
     ;;
     *)
-      # probe:
+      # probe (for image and if not exists check if name is a valid container name):
       if [ -f "$opt" ]; then
         parse_imgfile_path $opt
       else
@@ -598,6 +617,28 @@ done
 
 # parse remaining arguments if exists
 parse || true
+
+function insert_usbstick() {
+  local PATH=$1
+
+  /usr/bin/nc -U $QEMU_MONITOR_UNIXSOCKET -q 0 <<EOF
+drive_add 0 if=none,id=usbdrive1,format=raw,file=$PATH
+device_add usb-storage,drive=usbdrive1,bus=usb-bus.0
+EOF
+
+  # do stuff
+
+  #device_del usbdrive1
+}
+
+function remove_usbstick() {
+# removing does not work!
+  /usr/bin/nc -U $QEMU_MONITOR_UNIXSOCKET -q 0 <<EOF
+drive_del usbdrive1
+device_del usb-storage
+EOF
+}
+
 
 # determinate operation mode:
 if [ -n "$_IMG_FILE" ]; then
@@ -704,7 +745,7 @@ EOF
 
     CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
 
-    if [ $_IMG_BOOT -eq 1 ]; then
+    if [ ${_IMG_BOOT} -eq 1 ]; then
       mount_boot ${CONT_FILE}
 
       if ! $(cmp $BOOT_MNT_DIR/$(basename ${_KERNEL}) $_KERNEL); then
@@ -727,6 +768,25 @@ EOF
     else
       ls $DB_DIR
     fi
+
+    exit 0
+  ;;
+  extstore)
+    case $_EXTSTORAGE_MODE in
+      ls)
+        if [ ${_LIST_WITH_DETAILS} -eq 1 ]; then
+          ls -l "${EXTSTORE_DIR}"
+        else
+          ls "${EXTSTORE_DIR}"
+        fi
+      ;;
+      add)
+        insert_usbstick "${_EXTSTORAGE_REF}"
+      ;;
+      eject)
+        remove_usbstick
+      ;;
+    esac
 
     exit 0
   ;;
@@ -827,22 +887,10 @@ function run() {
     -rtc base=localtime \
     -name "$_MACHINE emulator"
 
+    # Requiers PCI:
+    #     -virtfs local,id=sharedFolder,path=/tmp/aa,security_model=passthrough,mount_tag=hostshare \
     #     -drive id=imgout0,if=none,format=raw,file="${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img" \
     #      -device usb-storage,bus=usb-bus.0,drive=imgout0 \
-}
-
-function insert_usbstick() {
-  local PATH=$1
-
-  nc -U $QEMU_MONITOR_UNIXSOCKET -q 0 <<EOF
-info usb
-EOF
-#  drive_add 0 if=none,id=usbdrive1,format=raw,file=$PATH
-#  device_add usb-storage,drive=usbdrive1,bus=usb-bus.0
-
-  # do stuff
-
-  #device_del usbdrive1
 }
 
 run

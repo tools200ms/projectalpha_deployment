@@ -3,15 +3,21 @@
 # AlphaWrap
 This is a wrapper for `qemu-system-*` tools. QEmu is a Linux virtualization and emulation tool. 
 
-This wrapper has been developed to provide platform for launching and automation of an ARM (and other) based systems. 
+This wrapper has been developed to provide platform for launching and testing ARM Linux images. QEmu provides virtualized machine such as Raspberry Pi, this softwar 'orchestrates' actions to be triggered inside VM.
 
-This is wrapper has been developed to managed 
+Essentially, this tool is used to build AlpBase Linux Images.
 
-orchestrate distribution building and testing process.
+![Made with ChatGPT (accually ChatGPT made this)](./art/AlphaWrap-mini.png)
 
-![Made with ChatGPT (accually ChatGPT made this)](./art/AlphaWrap.png)
+## Installation
 
-## QEmu Python Wrapper
+First, launch `alpha-wrap init`, this will initialize directory structure and databases inside `/var`. It is used by `Alpha-Wrap` to store container images, configurations and other data.
+
+## Running ARM Linux Image
+
+Now, it is time to run one of many ARM Linux images. The script has been tested with `raspi3b` device that is powerd by emulated ARMv8 four core CPU. This devices uses emulated USB 2.0, thus networking and storage access is kind slowish.
+
+Below are the instructions on how to run popular Raspberry Pi Linuxes.
 
 
 ### Raspberry Pi OS
