@@ -1,6 +1,0 @@
-carpet
-house
-river
-road
-mountain
-car

@@ -75,7 +75,7 @@ function bind_with_host() {
 function make_base() {
   targets_dir=$(realpath ./targets)
 
-  # delpoy chrooted environment, and bind special file systems:
+  # deploy chrooted environment, and bind special file systems:
   for b_dir in ${build_dir}; do
     arch=$(echo $b_dir | cut -d'.' -f2)
 

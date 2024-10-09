@@ -1,26 +1,71 @@
 
 
 # AlphaWrap
-This is a wrapper for `qemu-system-*` tools. QEmu is a Linux virtualization and emulation tool. 
+This is a wrapper for `qemu-system-*` that allows on creation, launch and interaction with QEmu emulated machines in a manner that Docker does.
 
-This wrapper has been developed to provide platform for launching and testing ARM Linux images. QEmu provides virtualized machine such as Raspberry Pi, this softwar 'orchestrates' actions to be triggered inside VM.
-
-Essentially, this tool is used to build AlpBase Linux Images.
+This wrapper manages QEMU ARM-emulated machines. It has been developed as a key tool to support the development and automation of AlpBase Linux, which is specifically designed for ARM platforms, particularly Raspberry Pi boards.
 
 ![Made with ChatGPT (accually ChatGPT made this)](./art/AlphaWrap-mini.png)
 
-## Installation
+## Functions
 
-First, launch `alpha-wrap init`, this will initialize directory structure and databases inside `/var`. It is used by `Alpha-Wrap` to store container images, configurations and other data.
+AlphaWrap manages QEmu ARM machines extending `qemu-system-*` command set by: 
+- ability of creating containers from image (ala Docker)
+- ease of usage, kernel, initramfs and other elements are handled by `alpha-wrap`, it simplifies working with VMs
+- provides functions to interact with VMs, attaching virtual USB storage, executing commands inside VM etc.
 
-## Running ARM Linux Image
+AlphaWrap has been developed as tool to biuld AlpBase Linux images.
 
-Now, it is time to run one of many ARM Linux images. The script has been tested with `raspi3b` device that is powerd by emulated ARMv8 four core CPU. This devices uses emulated USB 2.0, thus networking and storage access is kind slowish.
+## Concept
+
+On the beginning there is an image (ARM image). To launch the image, the user specifies the device model to emulate (defaulting to 'raspi3b' if omitted), along with the paths to the kernel, initramfs, and most importantly, the ARM image file.
+
+The image will be turned into container, if option `--name` is provided, 'named' container is created. If `--name` is skipped, instead 'temporary' container is created - that will live only until VM is on. 'Named' container states indefinitely, util is intentionally removed.
+
+The benefit coming from this aproach is that image stays intact. Some systems, such as Raspberry PI OS modify image upon first launch what is very practical for user. But, while experimenting and developing it's essential to keep track on what has changed, what not. Thus, distinction between images - that never change, and containers - that are prone for changes, is very practical.
+Container name can be provided after parameter `--name`, if `--name` does not have any name afterward, random container name is given.
+
+When container is created, user can attach "Attachable Storage" that is emulated "USB storage device", or execute (over SSH) certain command.
+
+Below, complete guide with an examples.
+
+## AlphaWrap Guaid
+
+### Installation
+
+Clone this repository: 
+```bash
+git clone https://github.com/tools200ms/projectalpha_deployment.git
+cd projectalpha_deployment
+```
+Copy DTB files and `alpha-wrap`:
+```bash
+sudo mkdir -p /var/lib/alphawrap/dtb
+sudo cp -r alpha-wrap/dtbs/* /var/lib/alphawrap/dtb
+
+sudo cp ./alpha-wrap/alpha-wrap-run /usr/local/bin/
+```
+and finally initialize directory structure and databases: 
+```bash
+alpha-wrap-run init
+```
+AlphaWrap uses `/var/cache` for storage, ensure that you have enough free space under this location. Containers might take about 10 GB, the rule of thumb is to have at least half of the disk space to be free (and trimmed if it's SSD). Make sure you are well below half of the available storage capacity.
+
+### Running ARM Linux Image
+
+`AlphaWrap` supports emulation of the following devices: 
+- `raspi0` - 
+- `raspi3b` - emulated ARMv8 four core CPU
+
+Linux ARM image, such as Raspberry Pi OS
+Now, it is time to run one of many ARM Linux images released by multiple Linux distribution projects. 
+
+has been tested with default  emulation that is powered by . This devices uses emulated USB 2.0, thus networking and storage access is kind slowish.
 
 Below are the instructions on how to run popular Raspberry Pi Linuxes.
 
 
-### Raspberry Pi OS
+#### Raspberry Pi OS
 [Download Raspberry Pi OS (preferably 64-bit and Lite version - who needs Desktop?)](https://www.raspberrypi.com/software/operating-systems/#raspberry-pi-os-64-bit), once done and saved run emulation: 
 
 ```bash
@@ -28,7 +73,7 @@ Below are the instructions on how to run popular Raspberry Pi Linuxes.
         -i y kernel8.img initramfs8
 ```
 
-### DietPi
+#### DietPi
 DietPi is Debian based distribution tuned for a wide variety of a Single Board Computers. Download ["Raspberry Pi 2/3/4/Zero 2"](https://dietpi.com/#download) image and run emulation with: 
 ```bash
 alpha-wrap-run -d raspi3b <pathto>/DietPi_RPi-ARMv8-<release_name>.img \
@@ -36,7 +81,7 @@ alpha-wrap-run -d raspi3b <pathto>/DietPi_RPi-ARMv8-<release_name>.img \
 ```
 *Note:* Diet Pi does not require Initial ramdisk (initramfs), kernel is tuned for a specific board so kernel does not need to make use of initramfs to boot (slimer system, faster boot).
 
-### Alpine
+#### Alpine
 
 Download [Alpine for Raspberry Pi, preferebly aarch64](https://www.alpinelinux.org/downloads/).
 

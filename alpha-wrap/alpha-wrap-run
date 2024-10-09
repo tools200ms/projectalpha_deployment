@@ -49,6 +49,8 @@ readonly DB_DIR="/var/cache/alphawrap/db"
 readonly EXTSTORE_DIR="/var/cache/alphawrap/ext_storage"
 readonly TEMP_DIR="/var/tmp"
 
+readonly LOCK_FILE="/tmp/alpha_wrap-run.lock"
+
 readonly SHARE_SPACE_FILE=${CACHE_DIR}/__share_space.iso
 readonly SHARE_SPACE_SIZE_MIB=100
 
@@ -78,6 +80,11 @@ _LIST_WITH_DETAILS=0
 # Run-time globals
 _LOBOOT_DEV=
 
+# connection:
+SSH_GUEST_PORT=15022
+SSH_DEF_PRIV_KEY_NAME=id_ed25519
+
+CONTAINER_SSH_KEY_PATH=
 
 function print_help() {
     cat <<EOF
@@ -120,6 +127,14 @@ Launching container:
 $(basename $0) <container name>
   This will launch container that has been created from an image.
 
+Guest interaction:
+$(basename $0) command <command to be exiecuted in guest>
+  This will launch provided command (over SSH) in VM.
+
+$(basename $0) sync <host source dir> [<guest target dir>]
+  This will synchronize local file or directory with a location on guest
+  system (over SSH). <guest target dir> can be skipped, if so default location
+  is '/usr/local/bin'.
 
 Listing containers:
 $(basename $0) ls --full|-f
@@ -229,8 +244,16 @@ function mount_boot() {
 
   # mount first partition, or if no partition table mount filesystem directly
   if [ -e ${_LOBOOT_DEV}p1 ]; then
-    $RUN mount ${_LOBOOT_DEV}p1 $BOOT_MNT_DIR -o ro
+    $RUN mount ${_LOBOOT_DEV}p1 $BOOT_MNT_DIR -o ro || true
     _NO_PART_TABLE_MODE=0
+
+    if findmnt -rno TARGET "${_LOBOOT_DEV}p1" >/dev/null; then
+      echo "Partition ${_LOBOOT_DEV}p1 is mounted."
+    else
+      echo "Falling back to mnount without partition table"
+      $RUN mount ${_LOBOOT_DEV} $BOOT_MNT_DIR -o ro
+      _NO_PART_TABLE_MODE=1;
+    fi
   else
     $RUN mount ${_LOBOOT_DEV} $BOOT_MNT_DIR -o ro
     _NO_PART_TABLE_MODE=1
@@ -252,19 +275,47 @@ function check_environment() {
   fi
 }
 
+function load_containersettings() {
+  if [ ! -e ${LOCK_FILE} ]; then
+    echo "No running container!"
+
+    return 1
+  fi
+
+  _CONTAINER_NAME=$(tail -n 1 ${LOCK_FILE})
+
+  CONTAINER_SSH_KEY_PATH=${DB_DIR}/${_CONTAINER_NAME}/${SSH_DEF_KEY_NAME}
+
+  return 0
+}
+
 # Command line parsing functions:
 
 function set_flag_imgboot() {
-  if [ -z "$2" ] && [ "yes_no" == "$2" ]; then
+  if [ -n "$2" ] && [ "yes_no" == "$2" ]; then
     _IMG_BOOT=$1
   fi
 }
+
+_VERBS="run
+jump
+fly
+walk
+sing
+drive"
+
+_NOUNS="carpet
+house
+river
+road
+mountain
+car"
 
 function set_create_container() {
 
   if [ -z "$2" ]; then
     if [ -z "${_CONTAINER_NAME}" ]; then
-      _CONTAINER_NAME="$(shuf -n 1 ./verbs.txt)-$(shuf -n 1 ./nouns.txt)"
+      _CONTAINER_NAME="$(echo "$_VERBS" | shuf -n 1)-$(echo "$_NOUNS" | shuf -n 1)"
     fi
 
     _NEW_CONTAINER=1
@@ -306,7 +357,7 @@ function parse_devmodel_name() {
 }
 
 function parse_kernel_name() {
-  if [[ ! "$1" =~ ^([a-zA-Z0-9_/-]){1,128}$ ]]; then
+  if [[ ! "$1" =~ ^([a-zA-Z0-9\._/-]){1,128}$ ]]; then
     echo "Illegal kernel name"
     exit 3
   fi
@@ -315,7 +366,7 @@ function parse_kernel_name() {
 }
 
 function parse_initramfs_name() {
-  if [[ ! "$1" =~ ^([a-zA-Z0-9_/-]){1,128}$ ]]; then
+  if [[ ! "$1" =~ ^([a-zA-Z0-9\._/-]){1,128}$ ]]; then
     echo "Illegal initramfs name"
     exit 3
   fi
@@ -346,10 +397,47 @@ _EXTSTORAGE_REF=
 _EXTSTORAGE_REF_ISINTERNAL=
 _EXTSTORAGE_SIZE=
 
+_GUEST_COMMAND=
+_RSYNC_LOCAL=
+_RSYNC_REMOTE=/usr/local/bin
+
 function parse_extstorage() {
   # validation is in: set_validate_extstore_add
   _EXTSTORAGE_REF=$1
 }
+
+function parse_guestcmd() {
+  _GUEST_COMMAND=$1
+}
+
+function set_guestcmd() {
+  if [ -z "${_GUEST_COMMAND}" ]; then
+    echo "Provide command!"
+    exit 2
+  fi
+}
+
+function parse_local_path() {
+  _RSYNC_LOCAL=$1
+}
+
+function parse_remote_path() {
+  _RSYNC_REMOTE=$1
+}
+
+function set_guestsync() {
+  if [ -z "${_RSYNC_LOCAL}" ]; then
+    echo "Provide file or directory name to be synchronized"
+    exit 2
+  fi
+
+  if [ ! -e "${_RSYNC_LOCAL}" ]; then
+    echo "File or directory does not exists!"
+
+    exit 3
+  fi
+}
+
 
 function parse_size() {
   local input="$1"
@@ -460,6 +548,8 @@ param_chain=
 function parse() {
   local opt=$1
   local _parse_now=$(first_arg $param_chain)
+  local opt_param=0
+
 
   if [ -z "$_parse_now" ]; then
     return 0
@@ -470,8 +560,6 @@ function parse() {
   if [[ "${_parse_now:0:1}" == '?' ]]; then
     opt_param=1
     _parse_now="${_parse_now:1}"
-  else
-    opt_param=0
   fi
 
   if [[ "${opt:0:1}" == "-" ]]; then
@@ -492,15 +580,22 @@ function parse() {
   fi
 
   if [ -n "$opt" ]; then
-    eval "parse_$_parse_now $opt"
+    eval "parse_$_parse_now \"$opt\""
     res_code=$?
 
     if [ -n "$setter_fn" ]; then
       eval "set_$setter_fn" $res_code $_parse_now
       #setter_fn=
     fi
-  else
-    res_code=0
+  elif [ ${opt_param} -eq 0 ]; then
+    if [ -n "$setter_fn" ]; then
+      # setter schould terminate program as no required argument has been provided
+      eval "set_$setter_fn" -1 $_parse_now
+      # exited ...
+    fi
+
+    echo "No argument, while argumen has been expected"
+    exit 3
   fi
 
   if [ -n "$setter_fn" ] && [ -z "$param_chain" ]; then
@@ -509,8 +604,6 @@ function parse() {
     setter_fn=
   fi
 
-  #_parse_now=$(first_arg $param_chain)
-  #param_chain=$(last_args $param_chain)
 
   return 1
 }
@@ -547,7 +640,8 @@ function has_mode() {
 
 # parse argument loop
 for opt in "$@"; do
-  if ! parse $opt; then
+
+  if ! parse "${opt}"; then
     # take next argument
     continue
   fi
@@ -586,6 +680,17 @@ for opt in "$@"; do
         echo "Wrong syntax"
         exit 2
       fi
+    ;;
+    command)
+      lock_mode "command"
+      param_chain="guestcmd"
+      setter_fn="guestcmd"
+    ;;
+    sync)
+      lock_mode "sync"
+
+      param_chain="local_path ?remote_path"
+      setter_fn="guestsync"
     ;;
     ls)
       if $(has_mode "extstore"); then
@@ -639,6 +744,43 @@ device_del usb-storage
 EOF
 }
 
+function op_list() {
+  shopt -s nullglob
+  local size_h
+  local details
+
+  for cont_db_path in $DB_DIR/*; do
+    cont_name=$(basename $cont_db_path)
+    echo -n "${cont_name}"
+
+    if [ $_LIST_WITH_DETAILS -eq 1 ]; then
+      size_h=$(first_arg $(du -h ${CACHE_DIR}/${cont_name}.img))
+      details="${size_h}"
+    else
+      details=""
+    fi
+
+    if [ "$_CONTAINER_NAME" == "${cont_name}" ]; then
+      echo " RUNNING ${details}"
+    else
+      echo "${details}"
+    fi
+
+  done
+}
+
+# Guest command call:
+function op_gcommand() {
+  local ssh_key_path=${DB_DIR}/${_CONTAINER_NAME}/${SSH_DEF_PRIV_KEY_NAME}
+
+  $RUN ssh -p ${SSH_GUEST_PORT} -i ${ssh_key_path} root@localhost ${_GUEST_COMMAND}
+}
+
+function op_sync() {
+  local ssh_key_path=${DB_DIR}/${_CONTAINER_NAME}/${SSH_DEF_PRIV_KEY_NAME}
+
+  $RUN rsync -avz -e "ssh -p ${SSH_GUEST_PORT} -i ${ssh_key_path}" "${_RSYNC_LOCAL}" root@localhost:${_RSYNC_REMOTE}
+}
 
 # determinate operation mode:
 if [ -n "$_IMG_FILE" ]; then
@@ -743,6 +885,10 @@ EOF
       _INITRAMFS=$DB_DIR/${_CONTAINER_NAME}/$_INITRAMFS
     fi
 
+    if [ -f "${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt" ]; then
+      CMDLINE_FILE_PATH=${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt
+    fi
+
     CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
 
     if [ ${_IMG_BOOT} -eq 1 ]; then
@@ -763,11 +909,25 @@ EOF
   list)
     check_environment $_MODE
 
-    if [ $_LIST_WITH_DETAILS -eq 1 ]; then
-      ls -lh $DB_DIR
-    else
-      ls $DB_DIR
-    fi
+    load_containersettings || true
+    op_list
+#    if [ $_LIST_WITH_DETAILS -eq 1 ]; then
+#      ls -lh $DB_DIR
+#    else
+#      ls $DB_DIR
+#    fi
+
+    exit 0
+  ;;
+  command)
+    load_containersettings
+    op_gcommand
+
+    exit 0
+  ;;
+  sync)
+    load_containersettings
+    op_sync
 
     exit 0
   ;;
@@ -854,7 +1014,7 @@ function run() {
     KERNEL_LINE="${KERNEL_LINE} -initrd ${_INITRAMFS}"
   fi
 
-  if [ ! -f "${CMDLINE_FILE_PATH}" ] && [ -f "${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt" ]; then
+  if [ -n "${CMDLINE_FILE_PATH}" ]; then
     CMDLINE_FILE_PATH=${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt
 
     KERNEL_PARAMS=$(tail -n 1 "${CMDLINE_FILE_PATH}")
@@ -871,9 +1031,21 @@ function run() {
     fi
   fi
 
+  if [ -e ${LOCK_FILE} ]; then
+    echo "Lock for container: "
+    tail -n 1 ${LOCK_FILE}
+    echo "Is it already running?"
+    exit 5
+  fi
+
+  # add PID and container name
+  echo $$ > ${LOCK_FILE}
+  echo ${_CONTAINER_NAME} >> ${LOCK_FILE}
+
+  #  -cpu ${M_CPU} -m 1024
+
   $RUN /usr/bin/qemu-system-aarch64 \
     -M ${_MACHINE} \
-    -cpu ${M_CPU} -m 1024 \
     -monitor unix:$QEMU_MONITOR_UNIXSOCKET,server,nowait \
     -serial pty \
     ${KERNEL_LINE} -append "${KERNEL_PARAMS}" \
@@ -881,11 +1053,13 @@ function run() {
     -device sd-card,drive=sysdrive \
     -usb \
     -device usb-kbd,bus=usb-bus.0 \
-    -netdev user,id=net0,hostfwd=tcp::15022-:22 \
+    -netdev user,id=net0,hostfwd=tcp::${SSH_GUEST_PORT}-:22 \
     -device usb-net,bus=usb-bus.0,netdev=net0 \
     -dtb ${DTB_FILE} \
     -rtc base=localtime \
     -name "$_MACHINE emulator"
+
+    rm ${LOCK_FILE}
 
     # Requiers PCI:
     #     -virtfs local,id=sharedFolder,path=/tmp/aa,security_model=passthrough,mount_tag=hostshare \
