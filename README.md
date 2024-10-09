@@ -54,13 +54,15 @@ AlphaWrap uses `/var/cache` for storage, ensure that you have enough free space 
 ### Running ARM Linux Image
 
 `AlphaWrap` supports emulation of the following devices: 
-- `raspi0` - 
-- `raspi3b` - emulated ARMv8 four core CPU
+- `raspi0` - DOES NOT WORK
+- `raspi3b` - emulated ARMv8 four core CPU, uses emulated USB 2.0, thus networking and storage access is kinda slowish.
 
-Linux ARM image, such as Raspberry Pi OS
-Now, it is time to run one of many ARM Linux images released by multiple Linux distribution projects. 
+Desired device is chosen with `--device` flag. 
 
-has been tested with default  emulation that is powered by . This devices uses emulated USB 2.0, thus networking and storage access is kind slowish.
+VM requires kernel and eventually initramfs in order to boot system. These parameters can be provided as `--imgboot` (`-i`) argument. `--imgboot` work in two 'modes':
+- `y` - yes, to search for a kernel and eventually initramfs within image file. `AlphaWrap` will examine image file and attempt to find a boot partition and within it appropriate kernel and initramfs files.
+- `n` - no, kernel and an optional initramfs must be located on host.
+
 
 Below are the instructions on how to run popular Raspberry Pi Linuxes.
 
