@@ -72,7 +72,7 @@ _IMG_FILE=
 _KERNEL=vmlinuz
 _INITRAMFS=
 
-_NEW_CONTAINER=0
+_PERMANENT_CONTAINER=0
 _CONTAINER_NAME=
 
 _LIST_WITH_DETAILS=0
@@ -318,7 +318,7 @@ function set_create_container() {
       _CONTAINER_NAME="$(echo "$_VERBS" | shuf -n 1)-$(echo "$_NOUNS" | shuf -n 1)"
     fi
 
-    _NEW_CONTAINER=1
+    _PERMANENT_CONTAINER=1
   fi
 }
 
@@ -340,7 +340,7 @@ function parse_yes_no() {
 }
 
 function parse_devmodel_name() {
-  if [[ ! "$1" =~ ^([a-zA-Z0-9-]){1,128}$ ]]; then
+  if [[ ! "$1" =~ ^([a-zA-Z0-9\._-]){1,128}$ ]]; then
     echo "Illegal machine (device) name"
     exit 3
   fi
@@ -748,22 +748,29 @@ function op_list() {
   shopt -s nullglob
   local size_h
   local details
+  local cont_path
 
   for cont_db_path in $DB_DIR/*; do
     cont_name=$(basename $cont_db_path)
+    details=
     echo -n "${cont_name}"
 
-    if [ $_LIST_WITH_DETAILS -eq 1 ]; then
-      size_h=$(first_arg $(du -h ${CACHE_DIR}/${cont_name}.img))
-      details="${size_h}"
+    if [ -f ${CACHE_DIR}/${cont_name}.img ]; then
+      cont_path=${CACHE_DIR}/${cont_name}.img
     else
-      details=""
+      cont_path=${TEMP_DIR}/${cont_name}.img
+      details="Temporary   "
+    fi
+
+    if [ $_LIST_WITH_DETAILS -eq 1 ]; then
+      size_h=$(first_arg $(du -h ${cont_path}))
+      details="${details}${size_h}"
     fi
 
     if [ "$_CONTAINER_NAME" == "${cont_name}" ]; then
       echo " RUNNING ${details}"
     else
-      echo "${details}"
+      echo "    ${details}"
     fi
 
   done
@@ -796,19 +803,24 @@ case $_MODE in
     check_environment $_MODE
 
     echo "Run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
-    if [ $_NEW_CONTAINER -eq 1 ]; then
+
+    if [ $_PERMANENT_CONTAINER -eq 1 ]; then
       echo "Creating continer: $_CONTAINER_NAME"
 
       CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
-      if [ -f $CONT_FILE ]; then
-        echo "Continer already exists, launch container instead"
+      if [ -f ${CONT_FILE} ]; then
+        echo "Container '${_CONTAINER_NAME}' already exists."
         exit 4
       fi
+    else
+      # running tempolary container
+      CONT_FILE=$(mktemp --tmpdir=${TEMP_DIR} --suffix=-container.img)
+      _CONTAINER_NAME=$(basename ${CONT_FILE} ".img")
+    fi
 
-      prepare_mmc_imgfile $_IMG_FILE $CONT_FILE
-
-      mkdir -p $DB_DIR/$_CONTAINER_NAME
-      cat <<EOF > $DB_DIR/${_CONTAINER_NAME}/config.txt
+    prepare_mmc_imgfile ${_IMG_FILE} ${CONT_FILE}
+    mkdir -p ${DB_DIR}/${_CONTAINER_NAME}
+    cat <<EOF > $DB_DIR/${_CONTAINER_NAME}/config.txt
 # file auto-generated
 container $_CONTAINER_NAME
 device    $_MACHINE
@@ -819,14 +831,6 @@ imgboot   $_IMG_BOOT
 rootimg   $_IMG_FILE
 cdate     $(date)
 EOF
-    else
-      # running tempolary container
-      TEMP_CACHE_FILE=$(mktemp --tmpdir=$TEMP_DIR --suffix=-container.img)
-      _CONTAINER_NAME=$(basename ${TEMP_CACHE_FILE})
-
-      prepare_mmc_imgfile $_IMG_FILE $TEMP_CACHE_FILE
-      CONT_FILE=$TEMP_CACHE_FILE
-    fi
 
     if [ $_IMG_BOOT -eq 1 ]; then
       # mount boot partition
@@ -841,11 +845,11 @@ EOF
       if [ -n "${_INITRAMFS}" ]; then
         _INITRAMFS=$BOOT_MNT_DIR/$_INITRAMFS
       fi
-    fi
+    #fi
 
     # installation
-    if [ $_NEW_CONTAINER -eq 1 ]; then
-      $RUN cp $_KERNEL $DB_DIR/$_CONTAINER_NAME/
+    #if [ $_PERMANENT_CONTAINER -eq 1 ]; then
+      $RUN cp $_KERNEL ${DB_DIR}/${_CONTAINER_NAME}/
       _KERNEL=${DB_DIR}/${_CONTAINER_NAME}/$(basename ${_KERNEL})
 
       if [ -n "${CMDLINE_FILE_PATH}" ]; then
@@ -857,27 +861,27 @@ EOF
         $RUN cp $_INITRAMFS $DB_DIR/$_CONTAINER_NAME/
         _INITRAMFS=$DB_DIR/$_CONTAINER_NAME/$(basename ${_INITRAMFS})
       fi
-    fi
+    #fi
 
-    if [ $_NEW_CONTAINER -eq 1 ] && [ $_IMG_BOOT -eq 1 ]; then
+    #if [ $_IMG_BOOT -eq 1 ]; then
       # umount boot partition
       umount_boot
     fi
 
     # create external storage for container:
-    prepare_usbstick ${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img 512
+    # prepare_usbstick ${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img 512
   ;;
 
   container)
     root_required
     check_environment $_MODE
 
-    echo "Run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
-
     _MACHINE=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^device'))
     _IMG_BOOT=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^imgboot'))
     _KERNEL=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^kernel'))
     _INITRAMFS=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^initramfs'))
+
+    echo "Run container... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"
 
     _KERNEL=$DB_DIR/${_CONTAINER_NAME}/$_KERNEL
 
@@ -901,6 +905,10 @@ EOF
 
       if [ -n "${_INITRAMFS}" ] && ! $(cmp $BOOT_MNT_DIR/$(basename ${_INITRAMFS}) ${_INITRAMFS}); then
         $RUN cp $BOOT_MNT_DIR/$(basename ${_INITRAMFS}) ${_INITRAMFS}
+      fi
+
+      if [ -n "${CMDLINE_FILE_PATH}" ] && ! $(cmp ${BOOT_MNT_DIR}/cmdline.txt ${CMDLINE_FILE_PATH}); then
+        $RUN cp $BOOT_MNT_DIR/cmdline.txt ${CMDLINE_FILE_PATH}
       fi
 
       umount_boot
@@ -1015,8 +1023,6 @@ function run() {
   fi
 
   if [ -n "${CMDLINE_FILE_PATH}" ]; then
-    CMDLINE_FILE_PATH=${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt
-
     KERNEL_PARAMS=$(tail -n 1 "${CMDLINE_FILE_PATH}")
   else
     # default kernel parameters
@@ -1069,14 +1075,9 @@ function run() {
 
 run
 
-if [ -n "$TEMP_CACHE_FILE" ] && [ -e "$TEMP_CACHE_FILE" ]; then
-  $RUN rm "$TEMP_CACHE_FILE"
-  $RUN rm ${EXTSTORE_DIR}/${_CONTAINER_NAME}-01.img
-
-  if [ $_IMG_BOOT -eq 1 ]; then
-    $RUN umount_boot
-  fi
+if [ "${_MODE}" == "image" ] && [ ${_PERMANENT_CONTAINER} -eq 0 ]; then
+  $RUN rm "${CONT_FILE}"
+  $RUN rm -rf ${DB_DIR}/${_CONTAINER_NAME}
 fi
-
 
 exit 0

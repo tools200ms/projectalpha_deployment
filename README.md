@@ -3,33 +3,37 @@
 # AlphaWrap
 This is a wrapper for `qemu-system-*` that allows on creation, launch and interaction with QEmu emulated machines in a manner that Docker does.
 
-This wrapper manages QEMU ARM-emulated machines. It has been developed as a key tool to support the development and automation of AlpBase Linux, which is specifically designed for ARM platforms, particularly Raspberry Pi boards.
+It has been developed as a key tool to support the development and automation of AlpBase Linux, which is specifically designed for ARM platforms, particularly Raspberry Pi boards.
 
 ![Made with ChatGPT (accually ChatGPT made this)](./art/AlphaWrap-mini.png)
 
-## Functions
 
-AlphaWrap manages QEmu ARM machines extending `qemu-system-*` command set by: 
-- ability of creating containers from image (ala Docker)
-- ease of usage, kernel, initramfs and other elements are handled by `alpha-wrap`, it simplifies working with VMs
-- provides functions to interact with VMs, attaching virtual USB storage, executing commands inside VM etc.
+## Features
 
-AlphaWrap has been developed as tool to biuld AlpBase Linux images.
+In short, `AlphaWrap` provides: 
+- Simple QEmu VM creation.
+- Concept of images and containers.
+- Emulated USB storage.
+- Guest interaction via SSH.
+
+**Note:** `AlphaWrap` has been tested with `qemu-system-aarch64` and `qemu-system-arm`, however as this is only 'wrapper', other architectures, such as `qemu-system-riscv64` should not be an issue.
 
 ## Concept
 
-On the beginning there is an image (ARM image). To launch the image, the user specifies the device model to emulate (defaulting to 'raspi3b' if omitted), along with the paths to the kernel, initramfs, and most importantly, the ARM image file.
+At the beginning there is an image (ARM image). To launch the image, the user specifies the device model to emulate (by default 'raspi3b' if omitted), along with the paths to the kernel, initramfs, and most importantly, the ARM image file.
 
-The image will be turned into container, if option `--name` is provided, 'named' container is created. If `--name` is skipped, instead 'temporary' container is created - that will live only until VM is on. 'Named' container states indefinitely, util is intentionally removed.
+The image will be turned into container, if option `--name` is provided, 'named' container is created. If `--name` is skipped, 'temporary' container is created - that will live only until VM is on. 'Named' container stays indefinitely, until is intentionally removed.
 
-The benefit coming from this aproach is that image stays intact. Some systems, such as Raspberry PI OS modify image upon first launch what is very practical for user. But, while experimenting and developing it's essential to keep track on what has changed, what not. Thus, distinction between images - that never change, and containers - that are prone for changes, is very practical.
+The benefit coming from this approach is that image stays intact. Some systems, such as Raspberry PI OS modify image upon first launch what is very practical for user. But, while experimenting and developing it's essential to keep track on what has changed, what not. Thus, distinction between images - that never change, and containers - that are prone for changes, is very practical.
 Container name can be provided after parameter `--name`, if `--name` does not have any name afterward, random container name is given.
+
+Unlike Docker, `AlphaWrap` allows on launching only one VM (container). The reason is that there is actually no need for an interaction in between containers. Container is launched to do a certain job, such as build Linux distribution for ARM and exit.
 
 When container is created, user can attach "Attachable Storage" that is emulated "USB storage device", or execute (over SSH) certain command.
 
 Below, complete guide with an examples.
 
-## AlphaWrap Guaid
+## AlphaWrap Guid
 
 ### Installation
 
@@ -53,35 +57,38 @@ AlphaWrap uses `/var/cache` for storage, ensure that you have enough free space 
 
 ### Running ARM Linux Image
 
-`AlphaWrap` supports emulation of the following devices: 
-- `raspi0` - DOES NOT WORK
+`AlphaWrap` supports emulation of the following devices:
 - `raspi3b` - emulated ARMv8 four core CPU, uses emulated USB 2.0, thus networking and storage access is kinda slowish.
+- `raspi0` - Under tests
 
 Desired device is chosen with `--device` flag. 
 
-VM requires kernel and eventually initramfs in order to boot system. These parameters can be provided as `--imgboot` (`-i`) argument. `--imgboot` work in two 'modes':
-- `y` - yes, to search for a kernel and eventually initramfs within image file. `AlphaWrap` will examine image file and attempt to find a boot partition and within it appropriate kernel and initramfs files.
-- `n` - no, kernel and an optional initramfs must be located on host.
+VM requires kernel and eventually initramfs in order to boot a system. These parameters can be provided as `--imgboot` (`-i`) argument. `--imgboot` works in two 'modes':
+- `y` or `yes`, to search for a kernel and eventually initramfs within image file. `AlphaWrap` will examine image and attempt to find a boot partition, kernel and initramfs is loaded from an image.
+- `n` or `no`, kernel and an optionally initramfs must be located on host.
 
 
 Below are the instructions on how to run popular Raspberry Pi Linuxes.
-
 
 #### Raspberry Pi OS
 [Download Raspberry Pi OS (preferably 64-bit and Lite version - who needs Desktop?)](https://www.raspberrypi.com/software/operating-systems/#raspberry-pi-os-64-bit), once done and saved run emulation: 
 
 ```bash
-./alpha-wrap-run -d raspi3b <pathto>/<date>-raspios-<release_name>-arm64-lite.img \
+alpha-wrap-run -d raspi3b <pathto>/<date>-raspios-<release_name>-arm64-lite.img \
         -i y kernel8.img initramfs8
 ```
 
+Once when `Raspberry Pi OS` is boot it will grow filesystem to span over entire space. `AlphaWrap` always creates a container based on image. Thus, any modification is saved into container, making image intact what is a convenience as the image stays in its original (downloaded) form.
+
 #### DietPi
-DietPi is Debian based distribution tuned for a wide variety of a Single Board Computers. Download ["Raspberry Pi 2/3/4/Zero 2"](https://dietpi.com/#download) image and run emulation with: 
+DietPi is Debian based distribution tuned for a performance, it is available for a wide variety of a Single Board Computers. Download ["Raspberry Pi 2/3/4/Zero 2"](https://dietpi.com/#download) image and run emulation with: 
 ```bash
 alpha-wrap-run -d raspi3b <pathto>/DietPi_RPi-ARMv8-<release_name>.img \
         -i y kernel8.img
 ```
-*Note:* Diet Pi does not require Initial ramdisk (initramfs), kernel is tuned for a specific board so kernel does not need to make use of initramfs to boot (slimer system, faster boot).
+**Note:** Diet Pi does not require Initial ramdisk (initramfs). Kernel is tuned for a specific board and system, so it does not need initramfs 'stage' - that is the case for more generic distribution (one for multiple boards and configurations).
+
+DietPi installation is launched automatically. As in the case of Raspberry Pi OS, DietPi image stays intact as all changes are saved into container.
 
 #### Alpine
 
@@ -89,8 +96,75 @@ Download [Alpine for Raspberry Pi, preferebly aarch64](https://www.alpinelinux.o
 
 Run emulation with: 
 ```bash
-alpha-wrap-run -d raspi3b <pathto>alpine-rpi-<version>-aarch64.img \
+alpha-wrap-run -d raspi3b <pathto>/alpine-rpi-<version>-aarch64.img \
         -i y boot/vmlinuz-rpi boot/initramfs-rpi
 ```
-This will lunch alpine installation.
+
+This will boot Alpine linux, to install login as root (no password) and issue `setup-alpine` for installation wizard.
+
+### Listing containers
+To see the list of containers and its statuses use `ls` (`-f` for more detailed view): 
+```bash
+$ alpha-wrap-run ls -f
+alpine-alpbase-aarch64    1.1G
+drive-river 257M
+tmp.SlmE1dsYnY-container RUNNING Temporary   257M
+```
+In this example there is a container named 'alpine-alpbase-aarch64', one with a random name 'drive-river' and one temporary 'tmp.SlmE1dsYnY-container'.
+
+### Persistent containers
+
+If no `--name` (`-n`) parameter is provided created container is temporary and will live until machine shutdown. To define persistent continer add `--name` followed by choosen name, or without parameter if you want to relay on a random name.
+
+```bash
+alpha-wrap-run -d raspi3b <pathto>/<date>-raspios-<release_name>-arm64-lite.img \
+        -i y kernel8.img initramfs8 \
+        --name
+```
+this will create container with a random name.
+```bash
+alpha-wrap-run -d raspi3b <pathto>/<date>-raspios-<release_name>-arm64-lite.img \
+        -i y kernel8.img initramfs8 \
+        --name this_is_raspberrypios01
+```
+or this named 'this_is_raspberrypios01'.
+
+### Virtual USB storage `extstore`
+Below command: 
+```bash
+alpha-wrap-run extstore add usbstick01 1GB
+```
+Creates virtual USB storage device (with a given size) and attaches it to currently running VM. Entire space of the device is 'zeroed' before attaching to the machine.
+The list of available storages can be checked with: 
+```bash
+alpha-wrap-run extstore ls
+```
+If storage is already created, it can be attached to curently running machine with: 
+```bash
+alpha-wrap-run extstore add usbstick01
+```
+
+### Guest interaction
+`AlphaWrap` can interact with VM via SSH, this requires SSH private key to be installed (copied) into: 
+```
+/var/cache/alphawrap/db/${CONTINER_NAME}/id_ed25519
+```
+Public pair must be added into VM's: 
+```
+/root/.ssh/authorized_keys
+```
+This enables `AlphaWrap` to execute as root commands within VM: 
+```
+alpha-wrap-run command "cat /proc/cpuinfo"
+```
+
+Local (host) directory can be synchronised with givaen location in guset with: 
+```
+alpha-wrap-run sync <path to local directory or file> <guest location>
+```
+
+## TODO
+
+TODO:
+- Guest interaction should work over serial console (no keys, no network stack etc.), there should be emulated `/dev/AMA0`, figure out how to do this.
 
