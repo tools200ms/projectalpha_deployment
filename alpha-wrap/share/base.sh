@@ -7,9 +7,25 @@
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         set -xe || set -e
 
-mirror="http://alpine.sakamoto.pl/alpine"
+readonly mirror="http://alpine.sakamoto.pl/alpine"
 
-build_dir="chroot.armhf chroot.aarch64"
+# Chroot directories for Alpine ARMHF (32-bit) and AARCH64 (64-bit)
+readonly build_dir=("chroot.armhf" "chroot.aarch64")
+
+function print_help() {
+    cat <<EOF
+Usage:
+$(basename $0) make
+  - create chroots
+
+$(basename $0) enter <chroot.armhf|chroot.aarch64>
+  - enter selected chroot
+
+$(basename $0) exec <chroot.armhf|chroot.aarch64> "command"
+  - execute command in selected chroot
+
+EOF
+}
 
 function deploy() {
   ch_root="$1"
@@ -76,7 +92,8 @@ function make_base() {
   targets_dir=$(realpath ./targets)
 
   # deploy chrooted environment, and bind special file systems:
-  for b_dir in ${build_dir}; do
+
+  for b_dir in ${build_dir[@]}; do
     arch=$(echo $b_dir | cut -d'.' -f2)
 
     # if exists assume chrooted environment is stetup
@@ -99,7 +116,7 @@ function make_base() {
 
 
   # perform image preparation:
-  for b_dir in ${build_dir}; do
+  for b_dir in ${build_dir[@]}; do
     arch=$(echo $b_dir | cut -d'.' -f2)
 
     chroot $b_dir base_preinstall.sh $arch
@@ -110,13 +127,30 @@ function make_base() {
   done
 }
 
+function check_param_chroot() {
+  if [[ ! " ${build_dir[@]} " =~ " $1 " ]]; then
+    echo "Provide chroot name: ${build_dir[@]}"
+    return 2
+  fi
+
+  return 0
+}
+
 case $1 in
   make)
     make_base
   ;;
 
   enter)
+    check_param_chroot $2
+
     chroot $2 /bin/ash -l
+  ;;
+
+  exec)
+    check_param_chroot $2
+
+    chroot $2 $3
   ;;
 
   build)
@@ -132,7 +166,7 @@ case $1 in
   ;;
 
   help|-h|--help)
-
+    print_help
   ;;
 esac
 

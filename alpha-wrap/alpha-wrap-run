@@ -137,6 +137,9 @@ $(basename $0) sync <host source dir> [<guest target dir>]
   system (over SSH). <guest target dir> can be skipped, if so default location
   is '/usr/local/bin'.
 
+$(basename $0) enter
+  Enter (ssh) to VM guest.
+
 Listing containers:
 $(basename $0) ls --full|-f
   ls - list all defined containers
@@ -693,6 +696,9 @@ for opt in "$@"; do
       param_chain="local_path ?remote_path"
       setter_fn="guestsync"
     ;;
+    enter)
+      lock_mode "enter"
+    ;;
     ls)
       if $(has_mode "extstore"); then
         _EXTSTORAGE_MODE="ls"
@@ -789,6 +795,13 @@ function op_sync() {
 
   $RUN rsync -avz -e "ssh -p ${SSH_GUEST_PORT} -i ${ssh_key_path}" "${_RSYNC_LOCAL}" root@localhost:${_RSYNC_REMOTE}
 }
+
+function op_enter() {
+  local ssh_key_path=${DB_DIR}/${_CONTAINER_NAME}/${SSH_DEF_PRIV_KEY_NAME}
+
+  $RUN ssh -p ${SSH_GUEST_PORT} -i ${ssh_key_path} root@localhost
+}
+
 
 # determinate operation mode:
 if [ -n "$_IMG_FILE" ]; then
@@ -937,6 +950,12 @@ EOF
   sync)
     load_containersettings
     op_sync
+
+    exit 0
+  ;;
+  enter)
+    load_containersettings
+    op_enter
 
     exit 0
   ;;

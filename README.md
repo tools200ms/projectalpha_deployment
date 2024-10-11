@@ -12,6 +12,8 @@ It has been developed as a key tool to support the development and automation of
 AlphaWrap uses system tools: `fdisk`, `dd` and `mkfs.*`, but it does not modify anything on a 'physical' hardware.
 It only operates within `/var/lib/alphawrap` and `/tmp` directories. 'Dangerous' operations are ONLY performed on ISO files desired for VMs.
 
+## How to not work as root ?
+
 ## Features
 
 In short, `AlphaWrap` provides: 
