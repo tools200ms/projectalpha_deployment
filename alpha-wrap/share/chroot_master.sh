@@ -89,7 +89,8 @@ function bind_with_host() {
 }
 
 function make_base() {
-  targets_dir=$(realpath ./targets)
+  targets_dir=$(dirname $(realpath $0))/chroot_master-builders
+#  targets_dir=$(realpath ./targets)
 
   # deploy chrooted environment, and bind special file systems:
 
@@ -119,19 +120,27 @@ function make_base() {
   for b_dir in ${build_dir[@]}; do
     arch=$(echo $b_dir | cut -d'.' -f2)
 
-    chroot $b_dir base_preinstall.sh $arch
+    cat <<EOF > ${b_dir}/etc/profile.d/50-chroot_env.sh
+TARGET_ARCH=$arch
+EOF
+
+    chroot ${b_dir} /bin/ash -c "apk update && apk upgrade && apk add bash"
     # chroot, install and configure necessary stuf
-    #$RUN chroot ${chroot_dir} /usr/local/bin/base_install.sh $arch
+    #$RUN chroot ${chroot_dir} /usr/local/bin/alpbase_builder.sh $arch
 
   # unbind
   done
 }
 
 function check_param_chroot() {
-  if [[ ! " ${build_dir[@]} " =~ " $1 " ]]; then
+  local dir_name=$(basename $1)
+
+  if [ "${dir_name}" == "." ] || [[ ! " ${build_dir[@]} " =~ " ${dir_name} " ]]; then
     echo "Provide chroot name: ${build_dir[@]}"
     return 2
   fi
+
+  # check if it's proper chroot ...
 
   return 0
 }

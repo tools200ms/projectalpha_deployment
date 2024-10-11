@@ -17,7 +17,7 @@ fi
 # '/proc/1/root' points to a symbolic link that is not what we check,
 # we check inode of the directory that symbolic link is pointing to.
 if [ $(stat -c %i /) -eq $(stat -c %i /proc/1/root/) ]; then
-  echo "We are not in chrooted environment, nothing to do."
+  echo "We are not in chroot environment, nothing to do."
   exit 0
 fi
 
@@ -38,6 +38,7 @@ fi
 #rc-update add savecache shutdown
 
 DEVICE=/dev/sda
+
 # super light config
 UDEV=mdev
 
