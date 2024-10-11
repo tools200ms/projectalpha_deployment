@@ -7,6 +7,10 @@ It has been developed as a key tool to support the development and automation of
 
 ![Made with ChatGPT (accually ChatGPT made this)](./art/AlphaWrap-mini.png)
 
+## What it does, what doesn't
+
+AlphaWrap uses system tools: `fdisk`, `dd` and `mkfs.*`, but it does not modify anything on a 'physical' hardware.
+It only operates within `/var/lib/alphawrap` and `/tmp` directories. 'Dangerous' operations are ONLY performed on ISO files desired for VMs.
 
 ## Features
 
@@ -44,8 +48,8 @@ cd projectalpha_deployment
 ```
 Copy DTB files and `alpha-wrap`:
 ```bash
-sudo mkdir -p /var/lib/alphawrap/dtb
-sudo cp -r alpha-wrap/dtbs/* /var/lib/alphawrap/dtb
+sudo mkdir -p /var/lib/alphawrap/_dtb
+sudo cp -r alpha-wrap/dtbs/* /var/lib/alphawrap/_dtb
 
 sudo cp ./alpha-wrap/alpha-wrap-run /usr/local/bin/
 ```
@@ -53,7 +57,7 @@ and finally initialize directory structure and databases:
 ```bash
 alpha-wrap-run init
 ```
-AlphaWrap uses `/var/cache` for storage, ensure that you have enough free space under this location. Containers might take about 10 GB, the rule of thumb is to have at least half of the disk space to be free (and trimmed if it's SSD). Make sure you are well below half of the available storage capacity.
+AlphaWrap uses `/var/lib/alphawrap` for storage, ensure that you have enough free space under this location. Containers might take about 10 GB, the rule of thumb is to have at least half of the disk space to be free (and trimmed if it's SSD). Make sure you are well below half of the available storage capacity.
 
 ### Running ARM Linux Image
 
@@ -167,4 +171,8 @@ alpha-wrap-run sync <path to local directory or file> <guest location>
 
 TODO:
 - Guest interaction should work over serial console (no keys, no network stack etc.), there should be emulated `/dev/AMA0`, figure out how to do this.
+
+## References
+
+[Raspberry PI Firmware (source of DTBs overlays)](https://github.com/raspberrypi/firmware)
 

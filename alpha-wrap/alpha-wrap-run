@@ -41,17 +41,18 @@ devices_dtb["raspi3b"]="raspios-bookworm-arm64/bcm2710-rpi-3-b.dtb"
 devices_cpu["raspi3b"]="cortex-a53"
 
 
-readonly DTB_LIB="/var/lib/alphawrap/dtb"
 readonly BOOT_MNT_DIR="/mnt/img.boot"
 
-readonly CACHE_DIR="/var/cache/alphawrap"
-readonly DB_DIR="/var/cache/alphawrap/db"
-readonly EXTSTORE_DIR="/var/cache/alphawrap/ext_storage"
+readonly AWSTORE_DIR="/var/lib/alphawrap"
+readonly DTB_LIB="/var/lib/alphawrap/_dtb"
+readonly DB_DIR="/var/lib/alphawrap/_db"
+
+readonly EXTSTORE_DIR="/var/lib/alphawrap/ext_storage"
 readonly TEMP_DIR="/var/tmp"
 
 readonly LOCK_FILE="/tmp/alpha_wrap-run.lock"
 
-readonly SHARE_SPACE_FILE=${CACHE_DIR}/__share_space.iso
+readonly SHARE_SPACE_FILE=${AWSTORE_DIR}/__share_space.iso
 readonly SHARE_SPACE_SIZE_MIB=100
 
 readonly QEMU_MONITOR_UNIXSOCKET="/tmp/qemu-monitor"
@@ -267,7 +268,7 @@ function umount_boot() {
 
 # Check environment:
 function check_environment() {
-  $RUN mkdir -p ${CACHE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
+  $RUN mkdir -p ${AWSTORE_DIR} ${DB_DIR} ${TEMP_DIR} ${EXTSTORE_DIR}
 
   if [ ! -f "${SHARE_SPACE_FILE}" ]; then
     $RUN dd bs=${ONE_MIB} if=/dev/zero of="${SHARE_SPACE_FILE}" count=${SHARE_SPACE_SIZE_MIB}
@@ -755,8 +756,8 @@ function op_list() {
     details=
     echo -n "${cont_name}"
 
-    if [ -f ${CACHE_DIR}/${cont_name}.img ]; then
-      cont_path=${CACHE_DIR}/${cont_name}.img
+    if [ -f ${AWSTORE_DIR}/${cont_name}.img ]; then
+      cont_path=${AWSTORE_DIR}/${cont_name}.img
     else
       cont_path=${TEMP_DIR}/${cont_name}.img
       details="Temporary   "
@@ -807,7 +808,7 @@ case $_MODE in
     if [ $_PERMANENT_CONTAINER -eq 1 ]; then
       echo "Creating continer: $_CONTAINER_NAME"
 
-      CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
+      CONT_FILE=${AWSTORE_DIR}/${_CONTAINER_NAME}.img
       if [ -f ${CONT_FILE} ]; then
         echo "Container '${_CONTAINER_NAME}' already exists."
         exit 4
@@ -893,7 +894,7 @@ EOF
       CMDLINE_FILE_PATH=${DB_DIR}/${_CONTAINER_NAME}/cmdline.txt
     fi
 
-    CONT_FILE=${CACHE_DIR}/${_CONTAINER_NAME}.img
+    CONT_FILE=${AWSTORE_DIR}/${_CONTAINER_NAME}.img
 
     if [ ${_IMG_BOOT} -eq 1 ]; then
       mount_boot ${CONT_FILE}
