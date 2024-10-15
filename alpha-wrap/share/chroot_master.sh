@@ -7,10 +7,16 @@
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
         set -xe || set -e
 
+readonly VERSION="0.0.1"
 readonly mirror="http://alpine.sakamoto.pl/alpine"
 
 # Chroot directories for Alpine ARMHF (32-bit) and AARCH64 (64-bit)
 readonly build_dir=("chroot.armhf" "chroot.aarch64")
+
+if [ -n "$RUN" ]; then
+  echo "PRETEND mode is 'ON', just showing what would be done."
+fi
+
 
 function print_help() {
     cat <<EOF
@@ -24,12 +30,27 @@ $(basename $0) enter <chroot.armhf|chroot.aarch64>
 $(basename $0) exec <chroot.armhf|chroot.aarch64> "command"
   - execute command in selected chroot
 
+$(basename $0) -v|--version
+  - show version and credentials
+
 EOF
 }
 
+function print_version() {
+  cat <<EOF
+$(basename $0) - AlphaWraper - ARM VM management tool
+Version:
+  ${VERSION}
+by:
+  Mateusz Piwek
+
+EOF
+}
+
+# Install chroot
 function deploy() {
-  ch_root="$1"
-  arch=$2
+  local ch_root="$1"
+  local arch=$2
 
   if [ -z $RUN ]; then
     temp_dir=$(mktemp -d)
@@ -67,11 +88,6 @@ function deploy() {
 function bind_with_host() {
   ch_root="$1"
 
-  if [ -n "$RUN" ]; then
-    echo "PRETEND mode, skipping binding of a special directories."
-    return
-  fi
-
   mnt_path=$(realpath ${ch_root}/dev)
   if [ $(mount | grep "$mnt_path" | wc -l) -eq 0 ]; then
     $RUN mount -o bind /dev ${mnt_path}
@@ -88,7 +104,47 @@ function bind_with_host() {
   fi
 }
 
-function make_base() {
+function unbind_from_host() {
+  ch_root="$1"
+
+
+  mnt_path=$(realpath ${ch_root}/dev)
+  if [ $(mount | grep "$mnt_path" | wc -l) -ne 0 ]; then
+    $RUN umount ${mnt_path}
+  fi
+
+  mnt_path=$(realpath ${ch_root}/proc)
+  if [ $(mount | grep "$mnt_path" | wc -l) -ne 0 ]; then
+    $RUN umount ${mnt_path}
+  fi
+
+  mnt_path=$(realpath ${ch_root}/sys)
+  if [ $(mount | grep "$mnt_path" | wc -l) -ne 0 ]; then
+    $RUN umount ${mnt_path}
+  fi
+}
+
+function bind_scripts() {
+  ch_root="$1"
+  targets_dir="$2"
+
+  mnt_path=$(realpath ${ch_root}/usr/local/bin)
+  if [ $(mount | grep "${mnt_path}" | wc -l) -eq 0 ]; then
+    $RUN mount --bind ${targets_dir} ${mnt_path}
+  fi
+}
+
+function unbind_scripts() {
+  ch_root="$1"
+
+  mnt_path=$(realpath ${ch_root}/usr/local/bin)
+  if [ $(mount | grep "${mnt_path}" | wc -l) -ne 0 ]; then
+    $RUN umount ${mnt_path}
+  fi
+}
+
+
+function set_base() {
   targets_dir=$(dirname $(realpath $0))/chroot_master-builders
 #  targets_dir=$(realpath ./targets)
 
@@ -103,23 +159,20 @@ function make_base() {
       deploy $b_dir $arch
     fi
 
-    bind_with_host $b_dir
-
-    if [ -n "$RUN" ]; then
-      echo "PRETEND mode, skipping binding of a target directory."
-      continue
-    fi
-
-    if [ $(mount | grep "$targets_dir" | wc -l) -eq 0 ]; then
-      mount --bind $targets_dir ${b_dir}/usr/local/bin/
-    fi
+    bind_with_host ${b_dir}
+    bind_scripts ${b_dir} ${targets_dir}
   done
 
 
   # perform image preparation:
   for b_dir in ${build_dir[@]}; do
+    if [ -f ${b_dir}/etc/profile.d/50-chroot_env.sh ]; then
+      continue
+    fi
+
     arch=$(echo $b_dir | cut -d'.' -f2)
 
+    # post deploy
     cat <<EOF > ${b_dir}/etc/profile.d/50-chroot_env.sh
 TARGET_ARCH=$arch
 EOF
@@ -129,6 +182,14 @@ EOF
     #$RUN chroot ${chroot_dir} /usr/local/bin/alpbase_builder.sh $arch
 
   # unbind
+  done
+}
+
+function unset_base() {
+
+  for b_dir in ${build_dir[@]}; do
+    unbind_with_host ${b_dir}
+    unbind_scripts ${b_dir}
   done
 }
 
@@ -147,27 +208,33 @@ function check_param_chroot() {
 
 case $1 in
   make)
-    make_base
+    # bind
+    # deploy
+    # post deploy
+    set_base
   ;;
 
   enter)
     check_param_chroot $2
+    # bind
+    # check
+    set_base
 
     chroot $2 /bin/ash -l
   ;;
 
   exec)
     check_param_chroot $2
+    # bind
+    # check
+    set_base
 
     chroot $2 $3
   ;;
 
-  build)
 
-  ;;
-
-  unbind)
-
+  close)
+    unset_base
   ;;
 
   purge)
@@ -176,6 +243,10 @@ case $1 in
 
   help|-h|--help)
     print_help
+  ;;
+
+  -v|--version)
+    print_version
   ;;
 esac
 

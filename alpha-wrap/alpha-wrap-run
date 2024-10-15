@@ -166,7 +166,7 @@ $(basename $0) extstore [ls --full|-f] | [add <name|path> SIZE] | [eject]
 
                  New storage is automatically initiated with zeros.
                  Default SIZE unit is MiB, SIZE can be postfixed by MiB, MB,
-                 GiG, GB e.g.: 2GB
+                 GiB, GB e.g.: 2GB
 
 Initialization:
 $(basename $0) init
