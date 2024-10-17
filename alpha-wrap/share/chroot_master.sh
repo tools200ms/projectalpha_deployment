@@ -107,7 +107,6 @@ function bind_with_host() {
 function unbind_from_host() {
   ch_root="$1"
 
-
   mnt_path=$(realpath ${ch_root}/dev)
   if [ $(mount | grep "$mnt_path" | wc -l) -ne 0 ]; then
     $RUN umount ${mnt_path}
@@ -224,12 +223,16 @@ case $1 in
   ;;
 
   exec)
-    check_param_chroot $2
+    chroot_dir=$2
+    command=$3
+
+    check_param_chroot ${chroot_dir}
     # bind
     # check
     set_base
 
-    chroot $2 $3
+    shift 3
+    chroot ${chroot_dir} ${command} "$@"
   ;;
 
 

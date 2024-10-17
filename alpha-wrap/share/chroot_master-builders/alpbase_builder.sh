@@ -1,11 +1,14 @@
-#!/bin/bash
+#!/bin/bash -l
 # Based on: https://wiki.alpinelinux.org/wiki/Alpine_Linux_in_a_chroot
 
-[ -n "$PRETEND" ] && [[ $(echo "$PRETEND" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
-        RUN="echo" || RUN=
+if [ -n "$PRETEND" ] && [[ $(echo "$PRETEND" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]]; then
+  RUN="echo"
+else
+  RUN=
+fi
 
 [ -n "$DEBUG" ] && [[ $(echo "$DEBUG" | tr '[:upper:]' '[:lower:]') =~ ^y|yes|1|on$ ]] && \
-        set -xe || set -e
+        set -xe -o pipefail || set -e -o pipefail
 
 
 function print_help() {
@@ -44,10 +47,15 @@ function require_chroot() {
   fi
 }
 
+
 RES_DIR=$(dirname $0)/files
 
+readonly SETUP_ROOT=/mnt/setup
+
+readonly LOG_FILE=/var/log/alpbase_alpine-setup.log
+
 MODE=$1
-BDEV=$2
+SETUP_DEV=$2
 
 if [[ "$MODE" == "-h" || "$MODE" == "--help" || "$MODE" == "help" ]]; then
     print_help
@@ -77,7 +85,7 @@ case $MODE in
   ;;
 esac
 
-if [ -z "${BDEV}" ] || [ ! -b "${BDEV}" ]; then
+if [ -z "${SETUP_DEV}" ] || [ ! -b "${SETUP_DEV}" ]; then
   echo "Provide block device"
   exit 3
 fi
@@ -87,15 +95,17 @@ case $EDITION in
   super_light)
     # for one CPU core
     DEVD=mdev
-
+    DESKTOP=none
   ;;
   just_light)
-    # multiple CPU cores:
+    # multi-core CPU:
     DEVD=mdevd
+    DESKTOP=none
   ;;
   be_desktop)
     # fancy features
     DEVD=udevd
+    DESKTOP=standard
   ;;
   *)
     echo "This should not happen"
@@ -121,21 +131,45 @@ echo ""
 #rc-update add savecache shutdown
 
 
-$RUN setup-disk $DEVICE <<EOF
+setup-disk ${SETUP_DEV} <<EOF | tee ${LOG_FILE}
 sys
 y
 EOF
 
 
-# at boot time
-$RUN setup-devd <<EOF
-$DEVD
-EOF
+$RUN mkdir -p ${SETUP_ROOT}
+$RUN mount ${SETUP_DEV}2 ${SETUP_ROOT}
+$RUN mount ${SETUP_DEV}1 ${SETUP_ROOT}/boot
 
-$RUN mount
-$RUN cp $RES_DIR/setup ...
+
+# copy desired files
+$RUN cp $RES_DIR/setup ${SETUP_ROOT}/etc/init.d/
+
+
+# Bind system directories for jumping into chroot
+chroot_bind.sh system ${SETUP_ROOT}
+
+
+# gnome|plasma|xfce|mate|sway
+
+if [ -z $DESKTOP ] && [ $DESKTOP != "none" ]; then
+  chroot ${SETUP_ROOT} setup-devd <<EOF | tee ${LOG_FILE}
+$DEVD
+n
+EOF
+fi
+
+# y - to scann for devices
+#chroot ${SETUP_ROOT} setup-devd <<EOF | tee ${LOG_FILE}
+#$DEVD
+#n
+#EOF
+
+chroot ${SETUP_ROOT} rc-update add setup boot
+
 
 $RUN sync
+# umount ${SETUP_ROOT}
 
 echo "Installation done."
 

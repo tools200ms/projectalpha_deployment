@@ -137,8 +137,11 @@ $(basename $0) sync <host source dir> [<guest target dir>]
   system (over SSH). <guest target dir> can be skipped, if so default location
   is '/usr/local/bin'.
 
-$(basename $0) enter
-  Enter (ssh) to VM guest.
+$(basename $0) enter|console
+  Enter (via ssh) VM guest console.
+
+$(basename $0) halt [--wait|-w]
+  Shutdown running machine.
 
 Listing containers:
 $(basename $0) ls --full|-f
@@ -696,7 +699,7 @@ for opt in "$@"; do
       param_chain="local_path ?remote_path"
       setter_fn="guestsync"
     ;;
-    enter)
+    enter|console)
       lock_mode "enter"
     ;;
     ls)
