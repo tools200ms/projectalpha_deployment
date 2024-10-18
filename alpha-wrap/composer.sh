@@ -15,7 +15,7 @@ IMAGE=images/alpbase-just_light-${BUILD_DATE}.iso
 
 echo "Creating Just Light Edition"
 
-${AW_RUN} extstore add ${IMAGE} 1GB
+${AW_RUN} extstore add ${IMAGE} 500MB
 ${AW_RUN} command "/bin/ash -l -c 'chroot_master.sh exec chroot.aarch64 alpbase_builder.sh jl /dev/sda'"
 
 # test

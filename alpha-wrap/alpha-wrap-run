@@ -140,8 +140,11 @@ $(basename $0) sync <host source dir> [<guest target dir>]
 $(basename $0) enter|console
   Enter (via ssh) VM guest console.
 
-$(basename $0) halt [--wait|-w]
+$(basename $0) stop
   Shutdown running machine.
+
+$(basename $0) waitfor
+  Wait until machine is responding.
 
 Listing containers:
 $(basename $0) ls --full|-f
@@ -702,6 +705,12 @@ for opt in "$@"; do
     enter|console)
       lock_mode "enter"
     ;;
+    stop)
+      lock_mode "stop"
+    ;;
+    waitfor)
+      lock_mode "waitfor"
+    ;;
     ls)
       if $(has_mode "extstore"); then
         _EXTSTORAGE_MODE="ls"
@@ -733,15 +742,37 @@ done
 # parse remaining arguments if exists
 parse || true
 
+function stop_machine() {
+  /usr/bin/nc -U ${QEMU_MONITOR_UNIXSOCKET} -q 0 <<EOF
+quit
+EOF
+  local ret=$?
+
+  if [ $ret -eq 0 ]; then
+    echo "VM ${_CONTAINER_NAME} sucessfully stopped."
+  else
+    echo "Failed to stop VM ${_CONTAINER_NAME}"
+  fi
+
+  return $ret
+}
+
 function insert_usbstick() {
   local PATH=$1
 
-  /usr/bin/nc -U $QEMU_MONITOR_UNIXSOCKET -q 0 <<EOF
-drive_add 0 if=none,id=usbdrive1,format=raw,file=$PATH
-device_add usb-storage,drive=usbdrive1,bus=usb-bus.0
+  local USB_STICK_CNT=$(/usr/bin/nc -U ${QEMU_MONITOR_UNIXSOCKET} -q 0 <<EOF | /usr/bin/grep 'Product QEMU USB MSD' | /usr/bin/wc -l
+info usb
+EOF
+)
+
+  local USB_DEV_ID="usbdrive$USB_STICK_CNT"
+
+  /usr/bin/nc -U ${QEMU_MONITOR_UNIXSOCKET} -q 0 <<EOF
+drive_add 0 if=none,id=${USB_DEV_ID},format=raw,file=${PATH}
+device_add usb-storage,drive=${USB_DEV_ID},bus=usb-bus.0
 EOF
 
-  # do stuff
+  echo "USB mass storage device inserted: ${USB_DEV_ID}"
 
   #device_del usbdrive1
 }
@@ -805,6 +836,44 @@ function op_enter() {
   $RUN ssh -p ${SSH_GUEST_PORT} -i ${ssh_key_path} root@localhost
 }
 
+function op_waitfor() {
+  local ssh_key_path=${DB_DIR}/${_CONTAINER_NAME}/${SSH_DEF_PRIV_KEY_NAME}
+  local WAIT_TIMEOUT=300             # Timeout (in seconds)
+  local PING_INTERVAL=3
+  SSH_OPTIONS="-o ConnectTimeout=3 -o BatchMode=yes"
+
+  echo -n "Waiting for '${_CONTAINER_NAME}' to reach multi-user mode ."
+
+  local ctime=$(date +%s)
+  local wait_until=$((${ctime}+${WAIT_TIMEOUT}))
+
+  while ! $(ssh -p ${SSH_GUEST_PORT} ${SSH_OPTIONS} -i ${ssh_key_path} root@localhost "[ $(rc-status -r) == "default" ]" 2> /dev/null); do
+    sleep $PING_INTERVAL
+    echo -n '.'
+
+    if [ $(date +%s) -gt ${wait_until} ]; then
+      echo ''
+      echo "Container not accessible!"
+
+      return 1
+    fi
+  done
+
+  echo ''
+  echo "'${_CONTAINER_NAME}' avaliable"
+
+#  for (( sec=0; sec<=$WAIT_TIMEOUT; i+=$WAIT_INTERVAL )); do
+#    if ssh -o ConnectTimeout=2 -o StrictHostKeyChecking=no -o BatchMode=yes "$SSH_USER@$VM_IP" "systemctl is-active multi-user.target" 2>/dev/null | grep -q "active"; then
+#      echo "VM has reached multi-user mode!"
+#      exit 0
+#    fi
+#    echo "Waiting for VM (attempt $((i/WAIT_INTERVAL+1)))..."
+#    sleep $WAIT_INTERVAL
+#  done
+
+#  echo "Timed out waiting for VM to reach multi-user mode!"
+  return 0
+}
 
 # determinate operation mode:
 if [ -n "$_IMG_FILE" ]; then
@@ -961,6 +1030,14 @@ EOF
     op_enter
 
     exit 0
+  ;;
+  stop)
+    load_containersettings
+    stop_machine && exit 0 || exit $?
+  ;;
+  waitfor)
+    load_containersettings
+    op_waitfor && exit 0 || exit $?
   ;;
   extstore)
     case $_EXTSTORAGE_MODE in
