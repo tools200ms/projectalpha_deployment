@@ -48,10 +48,7 @@ function require_chroot() {
 }
 
 
-RES_DIR=$(dirname $0)/files
-
-readonly SETUP_ROOT=/mnt/setup
-
+readonly RES_DIR=$(dirname $0)/files
 readonly LOG_FILE=/var/log/alpbase_alpine-setup.log
 
 MODE=$1
@@ -68,12 +65,15 @@ require_root && require_chroot
 case $MODE in
   super_light|sl)
     EDITION=super_light
+    EDITION_SHORT=sl
   ;;
   just_light|jl)
     EDITION=just_light
+    EDITION_SHORT=jl
   ;;
   be_desktop|bd)
     EDITION=be_desktop
+    EDITION_SHORT=bd
   ;;
   [a-zA-Z0-9_-]*)
     echo "Unknown edition: $MODE"
@@ -90,7 +90,9 @@ if [ -z "${SETUP_DEV}" ] || [ ! -b "${SETUP_DEV}" ]; then
   exit 3
 fi
 
-# set settings specific for setup:
+readonly SETUP_ROOT=/mnt/setup_${EDITION_SHORT}
+
+# === 0.1: Set settings specific for setup:
 case $EDITION in
   super_light)
     # for one CPU core
@@ -104,12 +106,13 @@ case $EDITION in
   ;;
   be_desktop)
     # fancy features
-    DEVD=udevd
+    DEVD=udev
     DESKTOP=standard
   ;;
   *)
     echo "This should not happen"
     exit 222
+  ;;
 esac
 
 echo "Installing: $EDITION edition"
@@ -130,33 +133,74 @@ echo ""
 #rc-update add killprocs shutdown
 #rc-update add savecache shutdown
 
-
+# === 1: Install base:
 setup-disk ${SETUP_DEV} <<EOF | tee ${LOG_FILE}
 sys
 y
 EOF
 
-
+# === 1.1: mount installed base:
 $RUN mkdir -p ${SETUP_ROOT}
 $RUN mount ${SETUP_DEV}2 ${SETUP_ROOT}
 $RUN mount ${SETUP_DEV}1 ${SETUP_ROOT}/boot
 
 
-# copy desired files
-$RUN cp $RES_DIR/setup ${SETUP_ROOT}/etc/init.d/
+# === 1.2: Copy setup and add edition specific settings:
+$RUN cat $RES_DIR/setup | \
+      sed "/Edition\ specific\ variable\ declarations/c\EDITION=${EDITION}\; DEVD=${DEVD}\; DESKTOP=${DESKTOP}" \
+      > ${SETUP_ROOT}/etc/init.d/setup && chmod +x ${SETUP_ROOT}/etc/init.d/setup
 
-
-# Bind system directories for jumping into chroot
+# === 1.3: Bind system directories for jumping into chroot:
 chroot_bind.sh system ${SETUP_ROOT}
 
+# === 2. Prepare edition:
 
-# gnome|plasma|xfce|mate|sway
+chroot ${SETUP_ROOT} rc-update add setup boot
 
+# 'setup-devd' does device scanning, hence install only necessary
+# packages and let to scann devices at a final device
+case $DEVD in
+  mdev)
+    chroot ${SETUP_ROOT} apk add --quiet busybox-mdev-openrc
+  ;;
+  mdevd)
+    # only install package, configuration will be done by 'setup' script
+    chroot ${SETUP_ROOT} apk add --quiet mdevd mdevd-openrc
+  ;;
+  udev)
+    #
+    chroot ${SETUP_ROOT} apk add --quiet eudev udev-init-scripts udev-init-scripts-openrc
+  ;;
+  *)
+    echo "This should not happen"
+    exit 222
+  ;;
+esac
+
+# === 2.2. Install desktop if applicable:
 if [ -z $DESKTOP ] && [ $DESKTOP != "none" ]; then
-  chroot ${SETUP_ROOT} setup-devd <<EOF | tee ${LOG_FILE}
-$DEVD
-n
-EOF
+  # gnome||xfce
+  case $DESKTOP in
+    tablet)
+      DESKTOP_TYPE=sway
+    ;;
+    light)
+      DESKTOP_TYPE=mate
+    ;;
+    standard)
+      DESKTOP_TYPE=plasma
+    ;;
+    *)
+      echo "This should not happen"
+      exit 222
+    ;;
+  esac
+
+  echo "Desktop to be installed: $DESKTOP_TYPE"
+#  chroot ${SETUP_ROOT} setup-devd <<EOF | tee ${LOG_FILE}
+#$DEVD
+#n
+#EOF
 fi
 
 # y - to scann for devices
@@ -165,7 +209,6 @@ fi
 #n
 #EOF
 
-chroot ${SETUP_ROOT} rc-update add setup boot
 
 
 $RUN sync

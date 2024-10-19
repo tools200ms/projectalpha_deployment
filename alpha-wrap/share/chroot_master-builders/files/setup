@@ -1,6 +1,12 @@
 #!/sbin/openrc-run
+# Auto-installation service, to be run at the beginning to perform setup.
+# If installation is successful, script is not called again.
 
-# The first boot init service
+# Setup configuration BEGIN
+
+# <==- Edition specific variable declarations place holder, do NOT remove NOR edit this commend -==>
+
+# END OF Setup configuration
 
 # read kernel options
 init_KOPT() {
@@ -14,7 +20,10 @@ init_KOPT() {
 }
 
 start() {
-    local
+
+    ls -aFl /boot
+
+    echo $DEVD
 	rm -f /etc/runlevels/*/$RC_SVCNAME
 	init_KOPT
 	local rc=0
@@ -30,6 +39,8 @@ start() {
 			*) echo "$KOPT_ssh_key" > /root/.ssh/authorized_keys;;
 		esac
 	fi
+
+	#
 	eend $rc
 }
 
