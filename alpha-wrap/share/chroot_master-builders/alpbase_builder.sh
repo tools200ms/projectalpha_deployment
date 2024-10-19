@@ -90,7 +90,9 @@ if [ -z "${SETUP_DEV}" ] || [ ! -b "${SETUP_DEV}" ]; then
   exit 3
 fi
 
-readonly SETUP_ROOT=/mnt/setup_${EDITION_SHORT}
+# Standard mount point, the same that is used by setup-disk
+readonly SETUP_ROOT=/mnt
+#/setup_${EDITION_SHORT}
 
 # === 0.1: Set settings specific for setup:
 case $EDITION in
@@ -134,12 +136,13 @@ echo ""
 #rc-update add savecache shutdown
 
 # === 1: Install base:
+# this script (for installation) does mount ${SETUP_DEV} under '/mnt'
 setup-disk ${SETUP_DEV} <<EOF | tee ${LOG_FILE}
 sys
 y
 EOF
 
-# === 1.1: mount installed base:
+# === 1.1: mount installed base (again):
 $RUN mkdir -p ${SETUP_ROOT}
 $RUN mount ${SETUP_DEV}2 ${SETUP_ROOT}
 $RUN mount ${SETUP_DEV}1 ${SETUP_ROOT}/boot
@@ -197,10 +200,11 @@ if [ -z $DESKTOP ] && [ $DESKTOP != "none" ]; then
   esac
 
   echo "Desktop to be installed: $DESKTOP_TYPE"
-#  chroot ${SETUP_ROOT} setup-devd <<EOF | tee ${LOG_FILE}
-#$DEVD
-#n
-#EOF
+  chroot ${SETUP_ROOT} setup-desktop $DESKTOP_TYPE <<EOF | tee ${LOG_FILE}
+master|no
+
+
+EOF
 fi
 
 # y - to scann for devices
@@ -209,10 +213,11 @@ fi
 #n
 #EOF
 
-
+chroot_bind.sh --unbind system ${SETUP_ROOT}
+umount ${SETUP_ROOT}/boot
+umount ${SETUP_ROOT}
 
 $RUN sync
-# umount ${SETUP_ROOT}
 
 echo "Installation done."
 

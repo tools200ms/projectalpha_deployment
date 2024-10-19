@@ -14,28 +14,51 @@ fi
 AW_RUN="./alpha-wrap/alpha-wrap-run"
 
 
+${AW_RUN} waitfor
+
+# Build Editions:
+
+echo "Creating Super Light Edition"
+BUILD_DATE=$(date +%m-%Y_d%d%H%M)
+IMAGE=images/alpbase-super_light-${BUILD_DATE}.iso
+
+${AW_RUN} extstore add ${IMAGE} 450MB
+${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.armhf alpbase_builder.sh sl /dev/sda'"
+
+# test
+
+# ${AW_RUN} --device raspi3b ${IMAGE} --imgboot y vmlinuz-rpi initramfs-rpi
+gzip -c ${IMAGE} > ${IMAGE}.gz
+bzip2 -c ${IMAGE} > ${IMAGE}.bz2
+xz -c ${IMAGE} > ${IMAGE}.xz
+
+
 echo "Creating Just Light Edition"
 BUILD_DATE=$(date +%m-%Y_d%d%H%M)
 IMAGE=images/alpbase-just_light-${BUILD_DATE}.iso
 
 ${AW_RUN} extstore add ${IMAGE} 500MB
-${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh jl /dev/sda'"
+${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh jl /dev/sdb'"
 
 # test
 
 # ${AW_RUN} --device raspi3b ${IMAGE} --imgboot y vmlinuz-rpi initramfs-rpi
-gzip ${IMAGE}
+gzip -c ${IMAGE} > ${IMAGE}.gz
+bzip2 -c ${IMAGE} > ${IMAGE}.bz2
+xz -c ${IMAGE} > ${IMAGE}.xz
 
 echo "Creating BeDesktop Edition"
 
 BUILD_DATE=$(date +%m-%Y_d%d%H%M)
 IMAGE=images/alpbase-bedesktop-${BUILD_DATE}.iso
 
-${AW_RUN} extstore add ${IMAGE} 700MB
-${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh bd /dev/sdb'"
+${AW_RUN} extstore add ${IMAGE} 1500MB
+${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh bd /dev/sdc'"
 
 # test
 
-gzip ${IMAGE}
+gzip -c ${IMAGE} > ${IMAGE}.gz
+bzip2 -c ${IMAGE} > ${IMAGE}.bz2
+xz -c ${IMAGE} > ${IMAGE}.xz
 
 exit 0
