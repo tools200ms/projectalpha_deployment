@@ -52,7 +52,7 @@ echo "Creating BeDesktop Edition"
 BUILD_DATE=$(date +%m-%Y_d%d%H%M)
 IMAGE=images/alpbase-bedesktop-${BUILD_DATE}.iso
 
-${AW_RUN} extstore add ${IMAGE} 1500MB
+${AW_RUN} extstore add ${IMAGE} 5200MB
 ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh bd /dev/sdc'"
 
 # test
@@ -60,5 +60,8 @@ ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_b
 gzip -c ${IMAGE} > ${IMAGE}.gz
 bzip2 -c ${IMAGE} > ${IMAGE}.bz2
 xz -c ${IMAGE} > ${IMAGE}.xz
+
+
+${AW_RUN} stop
 
 exit 0

@@ -111,6 +111,10 @@ case $EDITION in
     DEVD=udev
     DESKTOP=standard
   ;;
+  iam_tablet)
+    DEVD=mdevd
+    DESKTOP=tablet
+  ;;
   *)
     echo "This should not happen"
     exit 222
