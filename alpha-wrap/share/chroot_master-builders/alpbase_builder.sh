@@ -207,16 +207,17 @@ esac
 
 # === 2.2. Install desktop if applicable:
 if [ -z $DESKTOP ] && [ $DESKTOP != "none" ]; then
-  # gnome||xfce
+  # gnome||
   case $DESKTOP in
     tablet)
       DESKTOP_TYPE=sway
     ;;
     light)
-      DESKTOP_TYPE=mate
+      DESKTOP_TYPE=xfce
     ;;
     standard)
-      DESKTOP_TYPE=plasma
+      DESKTOP_TYPE=mate
+      #plasma
     ;;
     *)
       echo "This should not happen"

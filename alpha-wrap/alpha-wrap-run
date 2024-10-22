@@ -75,6 +75,7 @@ _INITRAMFS=
 
 _PERMANENT_CONTAINER=0
 _CONTAINER_NAME=
+_OPTION_DETACH=1
 
 _LIST_WITH_DETAILS=0
 
@@ -125,8 +126,9 @@ $(basename $0) --device|-d [raspi3b] <img file> --imgboot|-i y|n <kernel> <initr
                      created - it will be removed after machine is stopped.
 
 Launching container:
-$(basename $0) <container name>
+$(basename $0) <container name> [--detach|-d]
   This will launch container that has been created from an image.
+  --detach|-d    detach from console, command will launch continer and exit.
 
 Guest interaction:
 $(basename $0) command <command to be exiecuted in guest>
@@ -283,6 +285,14 @@ function check_environment() {
     $RUN dd bs=${ONE_MIB} if=/dev/zero of="${SHARE_SPACE_FILE}" count=${SHARE_SPACE_SIZE_MIB}
     $RUN mkfs.ext4 -L VM.SHARE "${SHARE_SPACE_FILE}"
   fi
+}
+
+function rm_lock_file() {
+  if [ -e "${LOCK_FILE}" ]; then
+    rm "${LOCK_FILE}" 2>/dev/null || true
+  fi
+
+  return 0
 }
 
 function load_containersettings() {
@@ -758,7 +768,7 @@ EOF
 }
 
 function insert_usbstick() {
-  local PATH=$1
+  local PATH=$(realpath $1)
 
   local USB_STICK_CNT=$(/usr/bin/nc -U ${QEMU_MONITOR_UNIXSOCKET} -q 0 <<EOF | /usr/bin/grep 'Product QEMU USB MSD' | /usr/bin/wc -l
 info usb
@@ -904,6 +914,10 @@ case $_MODE in
       _CONTAINER_NAME=$(basename ${CONT_FILE} ".img")
     fi
 
+    # set container's permissions for unprivileged user:
+    chgrp libvirt ${CONT_FILE}
+    chmod g+rw    ${CONT_FILE}
+
     prepare_mmc_imgfile ${_IMG_FILE} ${CONT_FILE}
     mkdir -p ${DB_DIR}/${_CONTAINER_NAME}
     cat <<EOF > $DB_DIR/${_CONTAINER_NAME}/config.txt
@@ -959,7 +973,6 @@ EOF
   ;;
 
   container)
-    root_required
     check_environment $_MODE
 
     _MACHINE=$(second_arg $(cat $DB_DIR/${_CONTAINER_NAME}/config.txt | grep '^device'))
@@ -1033,7 +1046,7 @@ EOF
   ;;
   stop)
     load_containersettings
-    stop_machine && exit 0 || exit $?
+    stop_machine && rm_lock_file && exit 0 || exit $?
   ;;
   waitfor)
     load_containersettings
@@ -1138,10 +1151,20 @@ function run() {
   fi
 
   if [ -e ${LOCK_FILE} ]; then
-    echo "Lock for container: "
-    tail -n 1 ${LOCK_FILE}
-    echo "Is it already running?"
-    exit 5
+    QEMU_ID=$(head -n 1 ${LOCK_FILE})
+
+    if ! kill -0 "$QEMU_ID" 2>/dev/null; then
+      echo "Lock file found, but no process"
+      echo "Removing: ${LOCK_FILE}"
+      echo "This indicates that program might have crash before."
+
+      rm "${LOCK_FILE}"
+    else
+      echo "Lock for container: "
+      tail -n 1 ${LOCK_FILE}
+      echo "Is it already running?"
+      exit 5
+    fi
   fi
 
   # add PID and container name
@@ -1149,6 +1172,11 @@ function run() {
   echo ${_CONTAINER_NAME} >> ${LOCK_FILE}
 
   #  -cpu ${M_CPU} -m 1024
+
+  EXTR_OPT=""
+  if [ ${_OPTION_DETACH} -eq 1 ]; then
+    EXTR_OPT="${EXTR_OPT} -daemonize"
+  fi
 
   $RUN /usr/bin/qemu-system-aarch64 \
     -M ${_MACHINE} \
@@ -1163,9 +1191,10 @@ function run() {
     -device usb-net,bus=usb-bus.0,netdev=net0 \
     -dtb ${DTB_FILE} \
     -rtc base=localtime \
-    -name "$_MACHINE emulator"
+    ${EXTR_OPT} -name "$_MACHINE emulator"
 
-    rm ${LOCK_FILE}
+    # lock file is removed by 'stop' command
+    #rm ${LOCK_FILE}
 
     # Requiers PCI:
     #     -virtfs local,id=sharedFolder,path=/tmp/aa,security_model=passthrough,mount_tag=hostshare \
