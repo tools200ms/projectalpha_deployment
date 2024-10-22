@@ -99,20 +99,24 @@ case $EDITION in
   super_light)
     # for one CPU core
     DEVD=mdev
+    ROOTFS=jffs2
     DESKTOP=none
   ;;
   just_light)
     # multi-core CPU:
     DEVD=mdevd
+    ROOTFS=jffs2
     DESKTOP=none
   ;;
   be_desktop)
     # fancy features
     DEVD=udev
+    ROOTFS=f2fs
     DESKTOP=standard
   ;;
   iam_tablet)
     DEVD=mdevd
+    ROOTFS=jffs2
     DESKTOP=tablet
   ;;
   *)
@@ -177,6 +181,23 @@ case $DEVD in
   udev)
     #
     chroot ${SETUP_ROOT} apk add --quiet eudev udev-init-scripts udev-init-scripts-openrc
+  ;;
+  *)
+    echo "This should not happen"
+    exit 222
+  ;;
+esac
+
+case $ROOTFS in
+  jffs2)
+    # mkfs.jffs2: Used to create a JFFS2 filesystem.
+    # jffs2dump: Dumps the contents of a JFFS2 filesystem.
+    # sumtool: Generates a summary for faster mounting of JFFS2.
+
+    chroot ${SETUP_ROOT} apk add mtd-utils
+  ;;
+  f2fs)
+    chroot ${SETUP_ROOT} apk add f2fs-tools
   ;;
   *)
     echo "This should not happen"
