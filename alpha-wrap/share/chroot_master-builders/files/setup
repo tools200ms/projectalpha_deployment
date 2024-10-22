@@ -19,6 +19,27 @@ init_KOPT() {
 	done
 }
 
+grow_fs() {
+    ROOT_DEV_BLOCK=/dev/mmcblk0p2
+    SYSTEM_DEV_BLOCK=/dev/mmcblk0
+
+    fdisk ${SYSTEM_DEV_BLOCK} <<EOF
+d
+2
+n
+p
+2
+
+
+N
+w
+EOF
+
+    partprobe ${SYSTEM_DEV_BLOCK}
+
+    resize2fs ${ROOT_DEV_BLOCK}
+}
+
 start() {
 
     ls -aFl /boot
