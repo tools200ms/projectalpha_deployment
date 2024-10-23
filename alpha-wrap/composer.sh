@@ -12,7 +12,9 @@ else
 fi
 
 AW_RUN="./alpha-wrap/alpha-wrap-run"
+TEMP_DIR=./build.temp
 
+mkdir -p ${TEMP_DIR}
 
 ${AW_RUN} waitfor
 
@@ -20,48 +22,57 @@ ${AW_RUN} waitfor
 
 echo "Creating Super Light Edition"
 BUILD_DATE=$(date +%m-%Y_d%d%H%M)
-IMAGE=images/alpbase-super_light-${BUILD_DATE}.iso
+IMAGE_SL=images/alpbase-super_light-${BUILD_DATE}.iso
 
-${AW_RUN} extstore add ${IMAGE} 450MB
+${AW_RUN} extstore add ${IMAGE_SL} 450MB
 ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.armhf alpbase_builder.sh sl /dev/sda'"
+
+${AW_RUN} command "/bin/ash -l -c 'mount /dev/sda1 /mnt'"
+mkdir -p ${TEMP_DIR}/sl_boot
+${AW_RUN} sync
 
 # test
 
 # ${AW_RUN} --device raspi3b ${IMAGE} --imgboot y vmlinuz-rpi initramfs-rpi
-gzip -c ${IMAGE} > ${IMAGE}.gz
-bzip2 -c ${IMAGE} > ${IMAGE}.bz2
-xz -c ${IMAGE} > ${IMAGE}.xz
+gzip -c ${IMAGE_SL} > ${IMAGE_SL}.gz
+bzip2 -c ${IMAGE_SL} > ${IMAGE_SL}.bz2
+xz -c ${IMAGE_SL} > ${IMAGE_SL}.xz
 
 
 echo "Creating Just Light Edition"
 BUILD_DATE=$(date +%m-%Y_d%d%H%M)
-IMAGE=images/alpbase-just_light-${BUILD_DATE}.iso
+IMAGE_JL=images/alpbase-just_light-${BUILD_DATE}.iso
 
-${AW_RUN} extstore add ${IMAGE} 500MB
+${AW_RUN} extstore add ${IMAGE_JL} 500MB
 ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh jl /dev/sdb'"
 
 # test
 
 # ${AW_RUN} --device raspi3b ${IMAGE} --imgboot y vmlinuz-rpi initramfs-rpi
-gzip -c ${IMAGE} > ${IMAGE}.gz
-bzip2 -c ${IMAGE} > ${IMAGE}.bz2
-xz -c ${IMAGE} > ${IMAGE}.xz
+gzip -c ${IMAGE_JL} > ${IMAGE_JL}.gz
+bzip2 -c ${IMAGE_JL} > ${IMAGE_JL}.bz2
+xz -c ${IMAGE_JL} > ${IMAGE_JL}.xz
 
 echo "Creating BeDesktop Edition"
 
 BUILD_DATE=$(date +%m-%Y_d%d%H%M)
-IMAGE=images/alpbase-bedesktop-${BUILD_DATE}.iso
+IMAGE_BD=images/alpbase-bedesktop-${BUILD_DATE}.iso
 
-${AW_RUN} extstore add ${IMAGE} 5200MB
+${AW_RUN} extstore add ${IMAGE_BD} 5200MB
 ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh bd /dev/sdc'"
 
 # test
 
-gzip -c ${IMAGE} > ${IMAGE}.gz
-bzip2 -c ${IMAGE} > ${IMAGE}.bz2
-xz -c ${IMAGE} > ${IMAGE}.xz
+gzip -c ${IMAGE_BD} > ${IMAGE_BD}.gz
+bzip2 -c ${IMAGE_BD} > ${IMAGE_BD}.bz2
+xz -c ${IMAGE_BD} > ${IMAGE_BD}.xz
 
 
 ${AW_RUN} stop
+
+# Do tests:
+${AW_RUN} -d raspi3b ${IMAGE_JL} -i y vmlinuz-rpi initramfs-rpi
+
+# rm -rf ${TEMP_DIR}
 
 exit 0

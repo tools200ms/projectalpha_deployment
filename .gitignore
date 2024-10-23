@@ -3,7 +3,7 @@
 pkg/*
 iso/*
 images/*
-flavors/*
+build.temp/*
 
 # JetBrains IDE
 .idea/

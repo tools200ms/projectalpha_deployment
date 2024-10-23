@@ -92,7 +92,7 @@ function print_help() {
     cat <<EOF
 Usage:
 Creating container:
-$(basename $0) --device|-d [raspi3b] <img file> --imgboot|-i y|n <kernel> <initramfs> --name|-n <name>
+$(basename $0) --device|-d [raspi3b] <img file> [+SIZE] --imgboot|-i y|n <kernel> <initramfs> --name|-n <name>
 
   --device|-d      - Model of the emulated device (default: '${DEFAULT_DEVICE_MODEL}').
   <img file>       - Path to image file to be mounted as 'mmcblk0'.
@@ -126,18 +126,20 @@ $(basename $0) --device|-d [raspi3b] <img file> --imgboot|-i y|n <kernel> <initr
                      created - it will be removed after machine is stopped.
 
 Launching container:
-$(basename $0) <container name> [--detach|-d]
+$(basename $0) <container name> [--wait|-w]
   This will launch container that has been created from an image.
-  --detach|-d    detach from console, command will launch continer and exit.
+  --wait|-w    wait until guest os is up.
 
 Guest interaction:
 $(basename $0) command <command to be exiecuted in guest>
   This will launch provided command (over SSH) in VM.
 
-$(basename $0) sync <host source dir> [<guest target dir>]
+$(basename $0) sync <host source dir> [<guest target dir>] --reverse|-r
   This will synchronize local file or directory with a location on guest
   system (over SSH). <guest target dir> can be skipped, if so default location
   is '/usr/local/bin'.
+  --reverse|-r    Synchronize guest location with a host local directory (reversed
+                  order)
 
 $(basename $0) enter|console
   Enter (via ssh) VM guest console.
@@ -420,6 +422,7 @@ _EXTSTORAGE_SIZE=
 _GUEST_COMMAND=
 _RSYNC_LOCAL=
 _RSYNC_REMOTE=/usr/local/bin
+_RSYNC_REVERSE=0
 
 function parse_extstorage() {
   # validation is in: set_validate_extstore_add
@@ -437,21 +440,46 @@ function set_guestcmd() {
   fi
 }
 
-function parse_local_path() {
+function parse_sync_path1() {
   _RSYNC_LOCAL=$1
 }
 
-function parse_remote_path() {
-  _RSYNC_REMOTE=$1
+function parse_sync_path2() {
+  if [ "${1:0:1}" != "-" ]; then
+    _RSYNC_REMOTE=$1
+  else
+    echo "Provide directory path"
+    exit 4
+  fi
 }
 
-function set_guestsync() {
-  if [ -z "${_RSYNC_LOCAL}" ]; then
-    echo "Provide file or directory name to be synchronized"
-    exit 2
+function parse_reverse_sync() {
+  if [ "$1" == "-r" ] || [ "$1" == "--reverse" ]; then
+    _RSYNC_REVERSE=1
+    # read
+    return 1
+  fi
+}
+
+function set_sync() {
+  if [ -n "${1}" ]; then
+    # per parameter setter call
+    return
   fi
 
-  if [ ! -e "${_RSYNC_LOCAL}" ]; then
+  # final setter call:
+  local l_loc
+  local r_loc
+
+  if [ $_RSYNC_REVERSE -eq 0 ]; then
+    l_loc="${_RSYNC_LOCAL}"
+    r_loc="${_RSYNC_REMOTE}"
+  else
+    l_loc="${_RSYNC_REMOTE}"
+    r_loc="${_RSYNC_LOCAL}"
+  fi
+
+  if [ ! -e "${l_loc}" ]; then
     echo "File or directory does not exists!"
 
     exit 3
@@ -498,7 +526,7 @@ function set_validate_extstore_add() {
   local FILENAME=
 
   if [ -n "${2}" ]; then
-    # skipp "per parameter" setter call
+    # v "per parameter" setter call
     # proceed in the case of "finale" call (when all variables are ready)
     return
   fi
@@ -609,7 +637,7 @@ function parse() {
     fi
   elif [ ${opt_param} -eq 0 ]; then
     if [ -n "$setter_fn" ]; then
-      # setter schould terminate program as no required argument has been provided
+      # setter should terminate program as no required argument has been provided
       eval "set_$setter_fn" -1 $_parse_now
       # exited ...
     fi
@@ -709,8 +737,8 @@ for opt in "$@"; do
     sync)
       lock_mode "sync"
 
-      param_chain="local_path ?remote_path"
-      setter_fn="guestsync"
+      param_chain="sync_path1 ?sync_path2 ?reverse_sync"
+      setter_fn="sync"
     ;;
     enter|console)
       lock_mode "enter"
@@ -837,7 +865,13 @@ function op_gcommand() {
 function op_sync() {
   local ssh_key_path=${DB_DIR}/${_CONTAINER_NAME}/${SSH_DEF_PRIV_KEY_NAME}
 
-  $RUN rsync -avz -e "ssh -p ${SSH_GUEST_PORT} -i ${ssh_key_path}" "${_RSYNC_LOCAL}" root@localhost:${_RSYNC_REMOTE}
+  if [ $_RSYNC_REVERSE -eq 0 ]; then
+    SYNC_RES="${_RSYNC_LOCAL} root@localhost:${_RSYNC_REMOTE}"
+  else
+    SYNC_RES="root@localhost:${_RSYNC_REMOTE} ${_RSYNC_LOCAL}"
+  fi
+
+  $RUN rsync -avz -e "ssh -p ${SSH_GUEST_PORT} -i ${ssh_key_path}" ${SYNC_RES}
 }
 
 function op_enter() {
@@ -895,7 +929,7 @@ fi
 
 case $_MODE in
   image)
-    root_required
+    [ $_PERMANENT_CONTAINER -eq 0 ] || root_required
     check_environment $_MODE
 
     echo "Run image... $_MACHINE $_IMG_FILE $_KERNEL $_INITRAMFS"

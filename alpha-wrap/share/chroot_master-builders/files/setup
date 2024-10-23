@@ -8,6 +8,20 @@
 
 # END OF Setup configuration
 
+RUN=
+
+# Checkout for --dry-run flag
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run|-Z)
+      RUN="einfo [pretend] "
+      break
+      ;;
+  esac
+done
+
+echo "Hello"
+
 # read kernel options
 init_KOPT() {
 	eval "set -- $(cat /proc/cmdline 2>/dev/null)"
@@ -19,11 +33,31 @@ init_KOPT() {
 	done
 }
 
-grow_fs() {
-    ROOT_DEV_BLOCK=/dev/mmcblk0p2
-    SYSTEM_DEV_BLOCK=/dev/mmcblk0
+blkd_check_sizes() {
+    local sys_blkd=$1
+    local root_blkd=$2
 
-    fdisk ${SYSTEM_DEV_BLOCK} <<EOF
+    # sizes in bytes ('--getsize64' option returns bytes):
+    local bdev_size=
+    local part_sum_size=0
+
+    for blkd in $(ls ${sys_blkd}*); do
+        if [ "${blkd}" == "${sys_blkd}" ]; then
+            bdev_size=$(blockdev --getsize64 ${sys_blkd})
+            continue;
+        fi
+        part_sum_size=(( $(blockdev --getsize64 ${blkd}) + ${part_sum_size} ))
+    done
+
+    echo "DIFF: ((bdev_size-part_sum_size))"
+    echo "    $bdev_size $part_sum_size"
+}
+
+blkd_grow_fs() {
+    local sys_blkd=$1
+    local root_blkd=$2
+
+    $RUN fdisk ${sys_blkd} <<EOF
 d
 2
 n
@@ -35,20 +69,35 @@ N
 w
 EOF
 
-    partprobe ${SYSTEM_DEV_BLOCK}
+    partprobe ${sys_blkd}
 
-    resize2fs ${ROOT_DEV_BLOCK}
+    $RUN resize2fs ${root_blkd}
+}
+
+check_blockdev() {
+    ROOT_DEV_BLOCK=$(realpath /dev/root)
+    SYSTEM_DEV_BLOCK="/dev/$(lsblk -no pkname ${ROOT_DEV_BLOCK})"
+
+    blkd_check_sizes ${SYSTEM_DEV_BLOCK} ${ROOT_DEV_BLOCK}
+}
+
+check_devd {
+    echo $DEVD
 }
 
 start() {
+    ebegin "Starting ${RC_SVCNAME}"
 
     ls -aFl /boot
+    check_blockdev
+    check_devd
 
-    echo $DEVD
-	rm -f /etc/runlevels/*/$RC_SVCNAME
+    echo $RUN
+	$RUN rm -f /etc/runlevels/*/$RC_SVCNAME
+
 	init_KOPT
 	local rc=0
-	ebegin "Starting ${RC_SVCNAME}"
+
 	if [ -n "$KOPT_ssh_key" ] && [ ! -f "/root/.ssh/authorized_keys" ]; then
 		einfo "Fetching ssh keys"
 		mkdir -pm 700 /root/.ssh
