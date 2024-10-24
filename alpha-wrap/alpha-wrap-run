@@ -185,6 +185,15 @@ $(basename $0) init
 EOF
 }
 
+_carg_chain_v=
+
+readonly _CARG_MINE=1
+readonly _CARG_NOTMINE=0
+
+function _carg_subchain_add() {
+  return 0
+}
+
 # sd-card size must be of power 2, e.g.:
 # 512MiB, 1GiB, 2GiB, 4GiB ...
 # Append extra 'zeros' to an end of an
@@ -414,20 +423,11 @@ function parse_container_name() {
   _CONTAINER_NAME=$1
 }
 
-_EXTSTORAGE_MODE=
-_EXTSTORAGE_REF=
-_EXTSTORAGE_REF_ISINTERNAL=
-_EXTSTORAGE_SIZE=
 
 _GUEST_COMMAND=
 _RSYNC_LOCAL=
 _RSYNC_REMOTE=/usr/local/bin
 _RSYNC_REVERSE=0
-
-function parse_extstorage() {
-  # validation is in: set_validate_extstore_add
-  _EXTSTORAGE_REF=$1
-}
 
 function parse_guestcmd() {
   _GUEST_COMMAND=$1
@@ -441,16 +441,23 @@ function set_guestcmd() {
 }
 
 function parse_sync_path1() {
-  _RSYNC_LOCAL=$1
+  # actually accept anything
+  if [ -n "${1}" ]; then
+    _RSYNC_LOCAL=$1
+    return 1
+  fi
+
+  return 0
 }
 
 function parse_sync_path2() {
-  if [ "${1:0:1}" != "-" ]; then
+  # accept anything
+  if [ -n "${1}" ]; then
     _RSYNC_REMOTE=$1
-  else
-    echo "Provide directory path"
-    exit 4
+    return 1
   fi
+
+  return 0
 }
 
 function parse_reverse_sync() {
@@ -459,33 +466,55 @@ function parse_reverse_sync() {
     # read
     return 1
   fi
+
+  return 0
 }
 
 function set_sync() {
-  if [ -n "${1}" ]; then
+  # arg (param, flag) or chain (root chain, param chain, flag chain)
+
+  # skip arg. setters
+  if [ $# -eq 2 ]; then
+    # accept
+    return 1
+  fi
+
+  # set flag
+  if [ $# -eq 1 ]; then
     # per parameter setter call
-    return
+    parse_reverse_sync "${1}"
+    retval=$?
+    return ${retval}
   fi
 
   # final setter call:
   local l_loc
   local r_loc
 
-  if [ $_RSYNC_REVERSE -eq 0 ]; then
-    l_loc="${_RSYNC_LOCAL}"
-    r_loc="${_RSYNC_REMOTE}"
-  else
-    l_loc="${_RSYNC_REMOTE}"
-    r_loc="${_RSYNC_LOCAL}"
-  fi
+  l_loc=$(realpath ${_RSYNC_LOCAL})
+  r_loc="${_RSYNC_REMOTE}"
 
-  if [ ! -e "${l_loc}" ]; then
+  if [ ! -e ${l_loc} ]; then
     echo "File or directory does not exists!"
 
     exit 3
   fi
 }
 
+function flag_opt() {
+  if [ "$1" == "-f" ] || [ "$1" == "--full" ]; then
+    _LIST_WITH_DETAILS=1
+    return 1
+  fi
+
+  return 0
+}
+
+# if something default define it:
+_EXTSTORAGE_MODE=add
+_EXTSTORAGE_REF=
+_EXTSTORAGE_REF_ISINTERNAL=
+_EXTSTORAGE_SIZE=
 
 function parse_size() {
   local input="$1"
@@ -515,11 +544,38 @@ function parse_size() {
 
     # Round up to the nearest integer using awk
     _EXTSTORAGE_SIZE=$(echo "$result" | awk '{print ($1 == int($1)) ? $1 : int($1)+1}')
-    echo "$_EXTSTORAGE_SIZE"
-  else
-    echo "Invalid input. Please provide a number followed by MB, GB, MiB, or GiB."
+    #echo "$_EXTSTORAGE_SIZE"
+
     return 1
+    #echo "Invalid input. Please provide a number followed by MB, GB, MiB, or GiB."
   fi
+
+  return 0
+}
+
+function parse_probeparam() {
+  # validation is in: set_validate_extstore_add
+  _EXTSTORAGE_REF=$1
+
+  if [[ "${_EXTSTORAGE_REF}" =~ ^[a-zA-Z0-9/\._\-]{1,1024}$ ]] && \
+      [ -f ${_EXTSTORAGE_REF} ]; then
+    # External extsotrage found:
+    _EXTSTORAGE_REF_ISINTERNAL=0
+  elif [[ "${_EXTSTORAGE_REF}" =~ ^[a-zA-Z0-9\._\-]{1,256}$ ]] && \
+        [ -f ${EXTSTORE_DIR}/${_EXTSTORAGE_REF} ]; then
+    _EXTSTORAGE_REF_ISINTERNAL=1
+  elif [ "${_EXTSTORAGE_REF}" == "ls" ] || \
+        [ "${_EXTSTORAGE_REF}" == "add" ] || \
+        [ "${_EXTSTORAGE_REF}" == "eject" ]; then
+    # this might be propper command :O:
+    _EXTSTORAGE_MODE=${_EXTSTORAGE_REF}
+  elif [[ "${_EXTSTORAGE_REF}" =~ ^[a-zA-Z0-9/\._\-]{1,1024}$ ]]; then
+    _EXTSTORAGE_REF_ISINTERNAL=0
+  else
+    return 0
+  fi
+
+  return 1
 }
 
 function set_validate_extstore_add() {
@@ -528,53 +584,38 @@ function set_validate_extstore_add() {
   if [ -n "${2}" ]; then
     # v "per parameter" setter call
     # proceed in the case of "finale" call (when all variables are ready)
-    return
+    return 1
   fi
 
-  if [[ "${_EXTSTORAGE_REF}" =~ ^[a-zA-Z0-9/\._\-]{1,1024}$ ]] ; then
-    FILENAME="${_EXTSTORAGE_REF}"
-    _EXTSTORAGE_REF_ISINTERNAL=0
-    # probe if it's a file name:
-    if [ -f "${FILENAME}" ]; then
-      if [ -n "${_EXTSTORAGE_SIZE}" ]; then
-        echo "Image already exists, excess size declaration, exiting"
-        exit 5
-      fi
 
-      return
+  if [ -z ${_EXTSTORAGE_MODE} ]; then
+    echo "No ext. storage mode defined"
+    exit 3
+  fi
+
+  if [ -z ${_EXTSTORAGE_REF} ]; then
+    echo "Provide storage name or file path."
+    exit 3
+  fi
+
+  if [ -n "${_EXTSTORAGE_REF_ISINTERNAL}" ] && [ -n "${_EXTSTORAGE_SIZE}" ]; then
+    echo "Image already exists, excess size declaration, exiting"
+    exit 5
+  fi
+
+  if [ -f ${_EXTSTORAGE_REF} ] || [ -f ${EXTSTORE_DIR}/${_EXTSTORAGE_REF} ]; then
+    if [ -n "${_EXTSTORAGE_SIZE}" ]; then
+      echo "Image already exists, excess size declaration, exiting"
+      exit 5
     fi
-  fi
 
-  if [[ "${_EXTSTORAGE_REF}" =~ ^[a-zA-Z0-9\._\-]{1,256}$ ]]; then
-    FILENAME=${EXTSTORE_DIR}/${_EXTSTORAGE_REF}
-
-    # make global variable correction (ugly)
-    _EXTSTORAGE_REF="${FILENAME}"
-    _EXTSTORAGE_REF_ISINTERNAL=1
-
-    if [ -f "${FILENAME}" ]; then
-      if [ -n "${_EXTSTORAGE_SIZE}" ]; then
-        echo "Image already exists, excess size declaration, exiting"
-        exit 5
-      fi
-
-      return
-    fi
-  fi
-
-  if [ -z "${FILENAME=}" ]; then
-    echo "Incorrect image file path or name"
-    exit 4
+    return 1
   fi
 
   # create image if size was given:
-
-  if [ -z "${_EXTSTORAGE_SIZE}" ]; then
-    echo "No size has been provided"
-    exit 4
-  fi
-
   prepare_usbstick "${_EXTSTORAGE_REF}" ${_EXTSTORAGE_SIZE}
+
+  return 1
 }
 
 # Parser 'global' variables
@@ -595,65 +636,72 @@ param_chain=
 #         continue parsing
 function parse() {
   local opt=$1
-  local _parse_now=$(first_arg $param_chain)
+  local _parse_now=$(first_arg ${param_chain})
   local opt_param=0
-
+  local accepted=0
 
   if [ -z "$_parse_now" ]; then
     return 0
   fi
 
-  param_chain=$(last_args $param_chain)
+  param_chain=$(last_args ${param_chain})
+
+  local set_fn=${setter_fn}
+  if [ -z "${param_chain}" ]; then
+    setter_fn=
+  fi
 
   if [[ "${_parse_now:0:1}" == '?' ]]; then
     opt_param=1
     _parse_now="${_parse_now:1}"
   fi
 
+  # flag
   if [[ "${opt:0:1}" == "-" ]]; then
     if [ $opt_param -eq 0 ]; then
       echo "Illegal parameter (starting with '-')"
       exit 1
     else
-      if [ -n "$setter_fn" ]; then
-        eval "set_$setter_fn"
-        setter_fn=
-      fi
-
-      _parse_now=
-      param_chain=
-
-      return 0
+      #if [ -n "$set_fn" ]; then
+        # option is a parameter, call only setter (no parser)
+      flag_$_parse_now ${opt}
+      accepted=$?
+      #else
+      #  accepted=0
+      #fi
     fi
-  fi
+  # parameter:
+  elif [ -n "$opt" ]; then
+    parse_$_parse_now ${opt}
+    accepted=$?
 
-  if [ -n "$opt" ]; then
-    eval "parse_$_parse_now \"$opt\""
-    res_code=$?
-
-    if [ -n "$setter_fn" ]; then
-      eval "set_$setter_fn" $res_code $_parse_now
-      #setter_fn=
+    if [ -n "$set_fn" ]; then
+      # param setter:
+      set_$set_fn ${accepted} $_parse_now
+      accepted=$?
     fi
   elif [ ${opt_param} -eq 0 ]; then
-    if [ -n "$setter_fn" ]; then
+    if [ -n "$set_fn" ]; then
+      # param setter
       # setter should terminate program as no required argument has been provided
-      eval "set_$setter_fn" -1 $_parse_now
-      # exited ...
+      set_$set_fn -1 $_parse_now
+      accepted=$?
     fi
 
     echo "No argument, while argumen has been expected"
     exit 3
   fi
 
-  if [ -n "$setter_fn" ] && [ -z "$param_chain" ]; then
-    # final seter call
-    eval "set_$setter_fn"
-    setter_fn=
+  if [ -n "$set_fn" ] && [ -z "$param_chain" ]; then
+    # final (chain) setter call
+    error=$(set_$set_fn)
+
+    if [ -z "${error}" ]; then
+      echo "ERROR: \n${error}"
+    fi
   fi
 
-
-  return 1
+  return ${accepted}
 }
 
 function root_required() {
@@ -711,15 +759,14 @@ for opt in "$@"; do
     ;;
     extstore)
       lock_mode "extstore"
+
+      param_chain="probeparam ?opt ?probeparam ?size"
+      setter_fn="validate_extstore_add"
     ;;
     add)
       lock_mode "extstore"
 
       _EXTSTORAGE_MODE="add"
-
-      #_parse_now=""
-      param_chain="extstorage ?size"
-      setter_fn="validate_extstore_add"
     ;;
     eject)
       if $(has_mode "extstore"); then
@@ -750,11 +797,11 @@ for opt in "$@"; do
       lock_mode "waitfor"
     ;;
     ls)
-      if $(has_mode "extstore"); then
-        _EXTSTORAGE_MODE="ls"
-      else
-        lock_mode "list"
-      fi
+      #if $(has_mode "extstore"); then
+      #  _EXTSTORAGE_MODE="ls"
+      #else
+      lock_mode "list"
+      #fi
     ;;
     --full|-f)
       _LIST_WITH_DETAILS=1

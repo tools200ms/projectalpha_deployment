@@ -29,7 +29,8 @@ ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.armhf alpbase_bui
 
 ${AW_RUN} command "/bin/ash -l -c 'mount /dev/sda1 /mnt'"
 mkdir -p ${TEMP_DIR}/sl_boot
-${AW_RUN} sync
+${AW_RUN} sync /mnt/ ${TEMP_DIR}/sl_boot -r
+${AW_RUN} command "/bin/ash -l -c 'umount /mnt'"
 
 # test
 
@@ -46,7 +47,13 @@ IMAGE_JL=images/alpbase-just_light-${BUILD_DATE}.iso
 ${AW_RUN} extstore add ${IMAGE_JL} 500MB
 ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh jl /dev/sdb'"
 
+${AW_RUN} command "/bin/ash -l -c 'mount /dev/sdb1 /mnt'"
+mkdir -p ${TEMP_DIR}/jl_boot
+${AW_RUN} sync /mnt/ ${TEMP_DIR}/jl_boot -r
+${AW_RUN} command "/bin/ash -l -c 'umount /mnt'"
+
 # test
+
 
 # ${AW_RUN} --device raspi3b ${IMAGE} --imgboot y vmlinuz-rpi initramfs-rpi
 gzip -c ${IMAGE_JL} > ${IMAGE_JL}.gz
@@ -61,8 +68,14 @@ IMAGE_BD=images/alpbase-bedesktop-${BUILD_DATE}.iso
 ${AW_RUN} extstore add ${IMAGE_BD} 5200MB
 ${AW_RUN} command "/bin/ash -l -c '${CHROOTM_EXEC} exec chroot.aarch64 alpbase_builder.sh bd /dev/sdc'"
 
-# test
+${AW_RUN} command "/bin/ash -l -c 'mount /dev/sdc1 /mnt'"
+mkdir -p ${TEMP_DIR}/bd_boot
+${AW_RUN} sync /mnt/ ${TEMP_DIR}/bd_boot -r
+${AW_RUN} command "/bin/ash -l -c 'umount /mnt'"
 
+# Do Tests
+
+# Pack
 gzip -c ${IMAGE_BD} > ${IMAGE_BD}.gz
 bzip2 -c ${IMAGE_BD} > ${IMAGE_BD}.bz2
 xz -c ${IMAGE_BD} > ${IMAGE_BD}.xz
